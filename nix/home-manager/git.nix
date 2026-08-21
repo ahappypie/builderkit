@@ -2,8 +2,13 @@
 {
   programs.git = {
     enable = true;
-    userName = builderKit.user.fullName;
-    userEmail = builderKit.user.email;
-    extraConfig.init.defaultBranch = builderKit.git.defaultBranch;
+    settings = {
+      user = {
+        name = builderKit.user.fullName;
+        email = builderKit.user.email;
+      };
+
+      init.defaultBranch = builderKit.git.defaultBranch;
+    };
   };
 }

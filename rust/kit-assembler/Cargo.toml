@@ -10,3 +10,4 @@ workspace = true
 
 [dependencies]
 askama.workspace = true
+clap.workspace = true

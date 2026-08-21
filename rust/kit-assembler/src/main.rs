@@ -1,23 +1,31 @@
 use std::{
-    env,
     error::Error,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     process::Command,
 };
 
 use askama::Template;
+use clap::{Parser, Subcommand};
 
-const FLAKE_INPUTS: &str = include_str!("../../../nix/platforms/darwin/flake-inputs.nix");
+const HOME_MANAGER_FRAGMENTS_DIR: &str = "nix/home-manager";
+
+const DARWIN_FLAKE_INPUTS: &str = include_str!("../../../nix/platforms/darwin/flake-inputs.nix");
 const DARWIN_CONFIGURATION: &str =
     include_str!("../../../nix/platforms/darwin/darwin-configuration.nix");
 const DARWIN_MODULE: &str = include_str!("../../../nix/platforms/darwin/darwin-module.nix");
-const HOME_MANAGER_FRAGMENTS_DIR: &str = "nix/home-manager";
 const DARWIN_HOME_MANAGER_ZSH_INIT_CONTENT_PATH: &str =
     "nix/platforms/darwin/home-manager/zsh-init-content.nix";
 
+const WSL_FLAKE_INPUTS: &str = include_str!("../../../nix/platforms/wsl/flake-inputs.nix");
+const WSL_CONFIGURATION: &str = include_str!("../../../nix/platforms/wsl/wsl-configuration.nix");
+const WSL_MODULE: &str = include_str!("../../../nix/platforms/wsl/wsl-module.nix");
+const WSL_HOME_MANAGER_ZSH_INIT_CONTENT_PATH: &str =
+    "nix/platforms/wsl/home-manager/zsh-init-content.nix";
+
 const DARWIN_MODULE_PLACEHOLDER: &str = "    # DARWIN MODULE IS EMBEDDED HERE.";
+const WSL_MODULE_PLACEHOLDER: &str = "    # WSL MODULE IS EMBEDDED HERE.";
 const HOME_MANAGER_PLACEHOLDER: &str = "    # HOME MANAGER MODULE BODY IS EMBEDDED HERE.";
 const PROGRAMS_ZSH_PLACEHOLDER: &str = "      # PROGRAMS ZSH BODY IS EMBEDDED HERE.";
 
@@ -28,9 +36,34 @@ struct DarwinFlakeTemplate {
     darwin_configuration: String,
 }
 
-#[derive(Debug)]
-struct ReleaseArgs {
-    out_dir: PathBuf,
+#[derive(Template)]
+#[template(path = "wsl-flake.nix", escape = "none")]
+struct WslFlakeTemplate {
+    flake_inputs: String,
+    wsl_configuration: String,
+}
+
+#[derive(Parser, Debug)]
+#[command(version, about = "Assemble Builder Kit generated flakes")]
+struct Cli {
+    #[command(subcommand)]
+    command: CommandArgs,
+}
+
+#[derive(Subcommand, Debug)]
+enum CommandArgs {
+    /// Assemble the macOS nix-darwin/Home Manager flake.
+    Darwin(OutArgs),
+
+    /// Assemble the WSL NixOS/Home Manager flake.
+    Wsl(OutArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct OutArgs {
+    /// Output directory for flake.nix and flake.lock.
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 fn main() {
@@ -41,48 +74,31 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let args = parse_args(env::args_os().skip(1))?;
-    release(&args)?;
-    Ok(())
-}
-
-fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ReleaseArgs, String> {
-    let mut args = args.into_iter();
-    let Some(command) = args.next() else {
-        return Err(usage());
-    };
-
-    if command != "release" {
-        return Err(usage());
-    }
-
-    let mut out_dir = PathBuf::from("dist/darwin");
-
-    while let Some(arg) = args.next() {
-        match arg.to_string_lossy().as_ref() {
-            "--out" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value for --out".to_owned());
-                };
-                out_dir = PathBuf::from(value);
-            }
-            unknown => return Err(format!("unknown argument: {unknown}\n\n{}", usage())),
+    match Cli::parse().command {
+        CommandArgs::Darwin(args) => {
+            let out_dir = args.out.unwrap_or_else(|| PathBuf::from("dist/darwin"));
+            release(&out_dir, render_darwin_flake)
+        }
+        CommandArgs::Wsl(args) => {
+            let out_dir = args.out.unwrap_or_else(|| PathBuf::from("dist/wsl"));
+            release(&out_dir, render_wsl_flake)
         }
     }
-
-    Ok(ReleaseArgs { out_dir })
 }
 
-fn release(args: &ReleaseArgs) -> Result<(), Box<dyn Error>> {
-    fs::create_dir_all(&args.out_dir)?;
+fn release(
+    out_dir: &Path,
+    render: impl FnOnce() -> Result<String, Box<dyn Error>>,
+) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(out_dir)?;
 
-    let flake = render_darwin_flake()?;
-    write_atomically(&args.out_dir.join("flake.nix"), flake.as_bytes())?;
+    let flake = render()?;
 
-    write_lock_file(&args.out_dir)?;
+    write_atomically(&out_dir.join("flake.nix"), flake.as_bytes())?;
+    write_lock_file(out_dir)?;
 
-    println!("wrote {}", args.out_dir.join("flake.nix").display());
-    println!("wrote {}", args.out_dir.join("flake.lock").display());
+    println!("wrote {}", out_dir.join("flake.nix").display());
+    println!("wrote {}", out_dir.join("flake.lock").display());
 
     Ok(())
 }
@@ -100,12 +116,36 @@ fn render_darwin_flake() -> Result<String, Box<dyn Error>> {
     let darwin_configuration = replace_placeholder(
         DARWIN_CONFIGURATION,
         DARWIN_MODULE_PLACEHOLDER,
-        &indent(&darwin_module, 4),
+        &indent(&render_import_fragment(&darwin_module), 4),
     );
 
     DarwinFlakeTemplate {
-        flake_inputs: indent(FLAKE_INPUTS.trim_end(), 4),
+        flake_inputs: indent(DARWIN_FLAKE_INPUTS.trim_end(), 4),
         darwin_configuration: indent(&darwin_configuration, 8),
+    }
+    .render()
+    .map_err(Into::into)
+}
+
+fn render_wsl_flake() -> Result<String, Box<dyn Error>> {
+    let zsh_init_content = fs::read_to_string(WSL_HOME_MANAGER_ZSH_INIT_CONTENT_PATH)?;
+    let home_manager_body = render_home_manager_fragments(&zsh_init_content)?;
+
+    let wsl_module = replace_placeholder(
+        WSL_MODULE,
+        HOME_MANAGER_PLACEHOLDER,
+        &indent(&home_manager_body, 4),
+    );
+
+    let wsl_configuration = replace_placeholder(
+        WSL_CONFIGURATION,
+        WSL_MODULE_PLACEHOLDER,
+        &indent(&render_import_fragment(&wsl_module), 4),
+    );
+
+    WslFlakeTemplate {
+        flake_inputs: indent(WSL_FLAKE_INPUTS.trim_end(), 4),
+        wsl_configuration: indent(&wsl_configuration, 8),
     }
     .render()
     .map_err(Into::into)
@@ -125,21 +165,21 @@ fn render_home_manager_fragments(zsh_init_content: &str) -> Result<String, Box<d
                 contents
             };
 
-            render_module_fragment(&contents)
+            indent(&render_import_fragment(&contents), 2)
         })
         .collect::<Vec<_>>();
 
     Ok(format!("imports = [\n{}\n];", modules.join("\n")))
 }
 
-fn render_module_fragment(fragment: &str) -> String {
+fn render_import_fragment(fragment: &str) -> String {
     let fragment = fragment.trim_end();
     let first_line = fragment.lines().next().unwrap_or_default().trim_end();
 
     if first_line.ends_with(':') {
-        format!("  (\n{}\n  )", indent(fragment, 4))
+        format!("(\n{}\n)", indent(fragment, 2))
     } else {
-        indent(fragment, 2)
+        fragment.to_owned()
     }
 }
 
@@ -213,8 +253,4 @@ fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), Box<dyn Error>> 
 
     fs::rename(tmp_path, path)?;
     Ok(())
-}
-
-fn usage() -> String {
-    "usage: kit-assembler release [--out <directory>]".to_owned()
 }
