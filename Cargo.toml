@@ -15,6 +15,9 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
+[workspace.dependencies]
+askama = "0.16.0"
+
 [profile.release]
 opt-level = 3
 lto = true        # Link-Time Optimization for smaller, faster binaries

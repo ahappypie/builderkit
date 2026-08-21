@@ -16,6 +16,10 @@ test:
 build:
     cargo build --workspace
 
+# Render the basic generated flake artifact.
+assemble out="dist":
+    cargo run -p kit-assembler -- release --out {{out}}
+
 # Build the Windows host CLI for an MSVC target using cargo-xwin.
 xwin-kit target:
     cargo xwin build -p kit --release --target {{target}}
