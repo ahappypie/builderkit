@@ -1,0 +1,53 @@
+name: Darwin release artifact
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-darwin-flake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: verify calver
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! printf '%s' "$tag" | grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]+$'; then
+          echo "Tag must use CalVer: YYYY.MM.PATCH" >&2
+          exit 1
+          fi
+
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: install nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: assemble darwin artifact from tag
+        run: nix develop -c just assemble darwin dist/darwin
+
+      - name: check artifact
+        run: nix flake check "path:$PWD/dist/darwin"
+
+      - name: package artifact
+        run: |
+          tar -C dist/darwin -czf "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz" flake.nix flake.lock
+          sha256sum "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz" > "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz.sha256"
+
+      - name: Publish release artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Builder Kit $GITHUB_REF_NAME" \
+            --notes "Builder Kit Darwin flake artifact for $GITHUB_REF_NAME." \
+            "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz" \
+            "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz.sha256"

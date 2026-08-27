@@ -1,0 +1,52 @@
+name: darwin flake update
+
+on:
+  workflow_dispatch:
+  #schedule:
+    # Monthly dependency refresh PR. Release tags are cut separately from main.
+    #- cron: "0 10 1 * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-darwin-flake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: install nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: assemble current darwin artifact
+        run: nix develop -c just assemble darwin dist/darwin
+
+      - name: snapshot current darwin
+        run: scripts/darwin-package-snapshot.sh dist/darwin darwin-update-snapshots/old
+
+      - name: update darwin lock
+        run: nix flake update --flake "path:$PWD/dist/darwin"
+
+      - name: snapshot updated darwin
+        run: scripts/darwin-package-snapshot.sh dist/darwin darwin-update-snapshots/new
+
+      - name: summarize changes
+        run: scripts/darwin-package-report.sh darwin-update-snapshots/old darwin-update-snapshots/new darwin-update-summary.md
+
+      - name: create pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 #v8.1.1
+        with:
+          token: ${{ github.token }}
+          branch: chore/darwin-flake-update
+          delete-branch: true
+          title: "[DARWIN] Update flake lock"
+          commit-message: "chore(darwin): update flake lock"
+          body-path: darwin-update-summary.md
+          labels: dependencies,darwin
