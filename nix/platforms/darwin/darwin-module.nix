@@ -18,6 +18,13 @@
 
   programs.zsh.enable = true;
 
+  # Builder Kit does not manage inbound SSH access by default. Students can
+  # generate GitHub/user SSH keys as an explicit runbook step.
+  services.openssh = {
+    enable = false;
+    hostKeys = [ ];
+  };
+
   home-manager.useGlobalPkgs = true;
   home-manager.useUserPackages = true;
   home-manager.backupFileExtension = "builderkit-backup";

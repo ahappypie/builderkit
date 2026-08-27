@@ -35,14 +35,14 @@ xwin-kit-windows-all: xwin-kit-windows-x86_64
 zigbuild package target:
     cargo zigbuild -p {{package}} --release --target {{target}}
 
-# Build the macOS host CLI for Apple Silicon with zig as the linker.
-zigbuild-kit-macos-aarch64:
-    just zigbuild kit aarch64-apple-darwin
+# Build and ad-hoc sign the macOS host CLI for Apple Silicon with Apple's native linker.
+build-kit-macos-aarch64:
+    cargo build -p kit --release --target aarch64-apple-darwin
 
 # Build the Linux WSL agent with zig as the linker.
 zigbuild-agent-linux-x86_64:
     just zigbuild kit-agent x86_64-unknown-linux-gnu
 
-zigbuild-all: zigbuild-kit-macos-aarch64 zigbuild-agent-linux-x86_64
+zigbuild-all: zigbuild-agent-linux-x86_64
 
-crossbuild-all: xwin-kit-windows-all zigbuild-all
+crossbuild-all: xwin-kit-windows-all build-kit-macos-aarch64 zigbuild-all
