@@ -3,7 +3,6 @@ use std::{
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use askama::Template;
@@ -17,12 +16,14 @@ const DARWIN_CONFIGURATION: &str =
 const DARWIN_MODULE: &str = include_str!("../../../nix/platforms/darwin/darwin-module.nix");
 const DARWIN_HOME_MANAGER_ZSH_INIT_CONTENT_PATH: &str =
     "nix/platforms/darwin/home-manager/zsh-init-content.nix";
+const DARWIN_LOCK_FILE_PATH: &str = "nix/platforms/darwin/flake.lock";
 
 const WSL_FLAKE_INPUTS: &str = include_str!("../../../nix/platforms/wsl/flake-inputs.nix");
 const WSL_CONFIGURATION: &str = include_str!("../../../nix/platforms/wsl/wsl-configuration.nix");
 const WSL_MODULE: &str = include_str!("../../../nix/platforms/wsl/wsl-module.nix");
 const WSL_HOME_MANAGER_ZSH_INIT_CONTENT_PATH: &str =
     "nix/platforms/wsl/home-manager/zsh-init-content.nix";
+const WSL_LOCK_FILE_PATH: &str = "nix/platforms/wsl/flake.lock";
 
 const DARWIN_MODULE_PLACEHOLDER: &str = "    # DARWIN MODULE IS EMBEDDED HERE.";
 const WSL_MODULE_PLACEHOLDER: &str = "    # WSL MODULE IS EMBEDDED HERE.";
@@ -77,17 +78,18 @@ fn run() -> Result<(), Box<dyn Error>> {
     match Cli::parse().command {
         CommandArgs::Darwin(args) => {
             let out_dir = args.out.unwrap_or_else(|| PathBuf::from("dist/darwin"));
-            release(&out_dir, render_darwin_flake)
+            release(&out_dir, DARWIN_LOCK_FILE_PATH, render_darwin_flake)
         }
         CommandArgs::Wsl(args) => {
             let out_dir = args.out.unwrap_or_else(|| PathBuf::from("dist/wsl"));
-            release(&out_dir, render_wsl_flake)
+            release(&out_dir, WSL_LOCK_FILE_PATH, render_wsl_flake)
         }
     }
 }
 
 fn release(
     out_dir: &Path,
+    lock_file: &str,
     render: impl FnOnce() -> Result<String, Box<dyn Error>>,
 ) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(out_dir)?;
@@ -95,7 +97,7 @@ fn release(
     let flake = render()?;
 
     write_atomically(&out_dir.join("flake.nix"), flake.as_bytes())?;
-    write_lock_file(out_dir)?;
+    copy_lock_file(Path::new(lock_file), &out_dir.join("flake.lock"))?;
 
     println!("wrote {}", out_dir.join("flake.nix").display());
     println!("wrote {}", out_dir.join("flake.lock").display());
@@ -220,27 +222,9 @@ fn indent(text: &str, spaces: usize) -> String {
         .join("\n")
 }
 
-fn write_lock_file(out_dir: &Path) -> Result<(), Box<dyn Error>> {
-    let output_lock_file = out_dir.join("flake.lock");
-    let flake_ref = format!("path:{}", out_dir.canonicalize()?.display());
-
-    let status = Command::new("nix")
-        .args([
-            "flake",
-            "lock",
-            "--output-lock-file",
-            output_lock_file
-                .to_str()
-                .ok_or("output lock path is not valid UTF-8")?,
-            &flake_ref,
-        ])
-        .status()?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("nix flake lock failed with status {status}").into())
-    }
+fn copy_lock_file(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
+    let lock = fs::read(source)?;
+    write_atomically(destination, &lock)
 }
 
 fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), Box<dyn Error>> {

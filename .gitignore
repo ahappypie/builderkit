@@ -2,3 +2,5 @@
 .idea
 target/
 dist/
+darwin-update-summary.md
+darwin-update-snapshots/

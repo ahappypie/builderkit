@@ -34,6 +34,12 @@ jobs:
       - name: update darwin lock
         run: nix flake update --flake "path:$PWD/dist/darwin"
 
+      - name: preserve updated darwin lock
+        run: cp dist/darwin/flake.lock nix/platforms/darwin/flake.lock
+
+      - name: check updated darwin flake
+        run: nix flake check "path:$PWD/dist/darwin"
+
       - name: snapshot updated darwin
         run: scripts/darwin-package-snapshot.sh dist/darwin darwin-update-snapshots/new
 
@@ -50,3 +56,5 @@ jobs:
           commit-message: "chore(darwin): update flake lock"
           body-path: darwin-update-summary.md
           labels: dependencies,darwin
+          add-paths: |
+            nix/platforms/darwin/flake.lock
