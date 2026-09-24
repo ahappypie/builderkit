@@ -17,8 +17,8 @@ build:
     cargo build --workspace
 
 # Render a generated flake artifact.
-assemble platform="darwin" out="dist/{{platform}}":
-    cargo run -p kit-assembler -- {{platform}} --out {{out}}
+assemble platform="darwin":
+    cargo run -p kit-assembler -- {{platform}} --out dist/{{platform}}
 
 # Build the Windows host CLI for an MSVC target using cargo-xwin.
 xwin-kit target:

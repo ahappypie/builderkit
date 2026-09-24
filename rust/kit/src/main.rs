@@ -2,7 +2,8 @@ use std::{
     env,
     error::Error,
     fmt::{self, Write as _},
-    io::{self, Write},
+    fs::File,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, Stdio},
 };
@@ -11,6 +12,10 @@ use std::{
 use std::os::unix::fs::PermissionsExt;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use flate2::read::GzDecoder;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tar::Archive;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Builder Kit host setup and update tool")]
@@ -59,6 +64,10 @@ struct SetupArgs {
 }
 
 #[derive(clap::Args, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these fields mirror CLI flags"
+)]
 struct UpdateArgs {
     /// Check for updates without changing the machine.
     #[arg(long)]
@@ -67,6 +76,26 @@ struct UpdateArgs {
     /// Accept Builder Kit prompts.
     #[arg(long)]
     yes: bool,
+
+    /// Local release artifact tarball containing flake.nix and flake.lock.
+    #[arg(long)]
+    artifact: Option<PathBuf>,
+
+    /// Version for a local artifact update.
+    #[arg(long)]
+    version: Option<String>,
+
+    /// Release index URL for static-site updates.
+    #[arg(long, default_value = "https://builderkit.dev/releases/index.json")]
+    release_index: String,
+
+    /// Write and validate configuration but do not run nix-darwin switch.
+    #[arg(long)]
+    no_activate: bool,
+
+    /// Do not run nix-store --gc after a successful activation.
+    #[arg(long)]
+    no_gc: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -221,14 +250,42 @@ fn setup_macos(args: &SetupArgs) -> Result<(), Box<dyn Error>> {
 }
 
 fn update(platform: HostPlatform, args: &UpdateArgs) -> Result<(), Box<dyn Error>> {
-    let plan = update_plan(platform, args.check, args.yes || args.check);
+    match platform {
+        HostPlatform::Macos => update_macos(args),
+        HostPlatform::Windows => {
+            let plan = update_plan(platform, args.check, args.yes || args.check);
+            print!("{}", plan.render());
+            if args.check {
+                Ok(())
+            } else {
+                Err("Windows update execution is not implemented yet".into())
+            }
+        }
+        HostPlatform::Unsupported => {
+            let plan = update_plan(platform, args.check, args.yes || args.check);
+            print!("{}", plan.render());
+            Err("Builder Kit update is supported only on Windows and macOS".into())
+        }
+    }
+}
+
+fn update_macos(args: &UpdateArgs) -> Result<(), Box<dyn Error>> {
+    let inspection = MacosSetupInspection::inspect()?;
+    let installed = InstallationState::load(&inspection.kit_root)?
+        .ok_or("Builder Kit is not installed; expected ~/.kit/state/installation.json")?;
+    let update = resolve_macos_update(&inspection, args, &installed)?;
+    let plan = macos_update_plan(&inspection, &installed, &update, args.yes || args.check);
     print!("{}", plan.render());
 
     if args.check {
         return Ok(());
     }
 
-    Err("update execution is not implemented yet".into())
+    if !args.yes && !confirm_standard()? {
+        return Err("update cancelled".into());
+    }
+
+    apply_macos_update(&inspection, args, &update)
 }
 
 fn eject(platform: HostPlatform, args: &EjectArgs) -> Result<(), Box<dyn Error>> {
@@ -294,6 +351,71 @@ impl MacosSetupInspection {
             NixState::Absent | NixState::Present => Ok(()),
             NixState::Unhealthy => Err("nix is present but did not respond successfully".into()),
         }
+    }
+}
+
+#[derive(Debug)]
+struct ResolvedUpdate {
+    version: String,
+    artifact: PathBuf,
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseIndex {
+    releases: Vec<ReleaseEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseEntry {
+    version: String,
+    platforms: ReleasePlatforms,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleasePlatforms {
+    darwin: Option<ReleaseArtifact>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseArtifact {
+    artifact_url: String,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallationState {
+    schema_version: u32,
+    platform: String,
+    version: String,
+    config_dir: PathBuf,
+}
+
+impl InstallationState {
+    fn load(kit_root: &Path) -> Result<Option<Self>, Box<dyn Error>> {
+        let path = Self::path(kit_root);
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let contents = std::fs::read_to_string(path)?;
+        Ok(Some(serde_json::from_str(&contents)?))
+    }
+
+    fn save(&self, kit_root: &Path) -> Result<(), Box<dyn Error>> {
+        let path = Self::path(kit_root);
+        let parent = path
+            .parent()
+            .ok_or("installation state path has no parent directory")?;
+        std::fs::create_dir_all(parent)?;
+        let json = serde_json::to_vec_pretty(self)?;
+        write_atomically(&path, &json)
+    }
+
+    fn path(kit_root: &Path) -> PathBuf {
+        kit_root.join("state").join("installation.json")
     }
 }
 
@@ -455,6 +577,14 @@ fn execute_macos_setup(
     if !args.no_activate {
         run_darwin_activation(&nix, &inspection.config_dir)?;
     }
+
+    InstallationState {
+        schema_version: 1,
+        platform: "darwin".to_owned(),
+        version: "0.0.0-local".to_owned(),
+        config_dir: inspection.config_dir.clone(),
+    }
+    .save(&inspection.kit_root)?;
 
     println!(
         "Builder Kit macOS configuration written to {}",
@@ -629,6 +759,16 @@ fn resolve_nix_executable() -> Result<PathBuf, Box<dyn Error>> {
     Err("nix was installed, but no nix executable was found on PATH or at /nix/var/nix/profiles/default/bin/nix; open a new shell or source /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh".into())
 }
 
+fn run_nix_store_gc(nix: &Path) -> Result<(), Box<dyn Error>> {
+    let nix_store = nix
+        .parent()
+        .map(|parent| parent.join("nix-store"))
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| PathBuf::from("nix-store"));
+
+    run_command(ProcessCommand::new(nix_store).arg("--gc"))
+}
+
 fn run_darwin_activation(nix: &Path, config_dir: &Path) -> Result<(), Box<dyn Error>> {
     let flake = format!("{}#aarch64-darwin", config_dir.display());
 
@@ -660,6 +800,288 @@ fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), Box<dyn Error>> 
     std::fs::write(&tmp_path, contents)?;
     std::fs::rename(tmp_path, path)?;
     Ok(())
+}
+
+fn resolve_macos_update(
+    inspection: &MacosSetupInspection,
+    args: &UpdateArgs,
+    installed: &InstallationState,
+) -> Result<ResolvedUpdate, Box<dyn Error>> {
+    if let Some(artifact) = &args.artifact {
+        return Ok(ResolvedUpdate {
+            version: args
+                .version
+                .clone()
+                .unwrap_or_else(|| "0.0.0-local".to_owned()),
+            artifact: artifact.clone(),
+            sha256: None,
+        });
+    }
+
+    let cache_dir = inspection.kit_root.join("cache").join("updates");
+    std::fs::create_dir_all(&cache_dir)?;
+    let index_path = cache_dir.join("index.json");
+    download_url(&args.release_index, &index_path)?;
+
+    let index: ReleaseIndex = serde_json::from_str(&std::fs::read_to_string(&index_path)?)?;
+    let release = index
+        .releases
+        .iter()
+        .filter(|release| release.platforms.darwin.is_some())
+        .filter(|release| calver_gt(&release.version, &installed.version))
+        .max_by(|left, right| compare_calver(&left.version, &right.version))
+        .ok_or("no newer Darwin release is available")?;
+
+    let artifact = release
+        .platforms
+        .darwin
+        .as_ref()
+        .ok_or("selected release is missing Darwin artifact metadata")?;
+    let artifact_path = cache_dir.join(format!("builderkit-darwin-{}.tar.gz", release.version));
+    download_url(&artifact.artifact_url, &artifact_path)?;
+
+    Ok(ResolvedUpdate {
+        version: release.version.clone(),
+        artifact: artifact_path,
+        sha256: Some(artifact.sha256.clone()),
+    })
+}
+
+fn apply_macos_update(
+    inspection: &MacosSetupInspection,
+    args: &UpdateArgs,
+    update: &ResolvedUpdate,
+) -> Result<(), Box<dyn Error>> {
+    if let Some(expected) = &update.sha256 {
+        verify_sha256(&update.artifact, expected)?;
+    }
+
+    let unpacked = inspection
+        .kit_root
+        .join("cache")
+        .join("unpacked")
+        .join(&update.version);
+    if unpacked.exists() {
+        std::fs::remove_dir_all(&unpacked)?;
+    }
+    std::fs::create_dir_all(&unpacked)?;
+    unpack_tar_gz(&update.artifact, &unpacked)?;
+
+    let payload = MacosPayload::from_dir(&unpacked)?;
+    let current_flake_path = inspection.config_dir.join("flake.nix");
+    let current_lock_path = inspection.config_dir.join("flake.lock");
+    let current_flake = std::fs::read_to_string(&current_flake_path)?;
+    let user_settings = extract_user_settings_block(&current_flake)?;
+    let candidate_flake = replace_user_settings_block(&payload.flake, &user_settings)?;
+
+    let backup_dir = create_backup(inspection)?;
+    write_atomically(&current_flake_path, candidate_flake.as_bytes())?;
+    write_atomically(&current_lock_path, payload.lock.as_bytes())?;
+
+    let nix = resolve_nix_executable()?;
+    let result = run_command(
+        ProcessCommand::new(&nix)
+            .arg("flake")
+            .arg("check")
+            .arg(format!("path:{}", inspection.config_dir.display())),
+    )
+    .and_then(|()| {
+        if args.no_activate {
+            Ok(())
+        } else {
+            run_darwin_activation(&nix, &inspection.config_dir)
+        }
+    });
+
+    if let Err(error) = result {
+        restore_backup(inspection, &backup_dir)?;
+        return Err(format!(
+            "update failed; restored flake files from {}: {error}",
+            backup_dir.display()
+        )
+        .into());
+    }
+
+    if !args.no_activate
+        && !args.no_gc
+        && let Err(error) = run_nix_store_gc(&nix)
+    {
+        eprintln!("warning: nix-store --gc failed after successful activation: {error}");
+    }
+
+    InstallationState {
+        schema_version: 1,
+        platform: "darwin".to_owned(),
+        version: update.version.clone(),
+        config_dir: inspection.config_dir.clone(),
+    }
+    .save(&inspection.kit_root)?;
+
+    println!("Builder Kit updated to {}", update.version);
+    Ok(())
+}
+
+fn create_backup(inspection: &MacosSetupInspection) -> Result<PathBuf, Box<dyn Error>> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let backup_dir = inspection
+        .kit_root
+        .join("backups")
+        .join(format!("update-{timestamp}"));
+    std::fs::create_dir_all(&backup_dir)?;
+    std::fs::copy(
+        inspection.config_dir.join("flake.nix"),
+        backup_dir.join("flake.nix"),
+    )?;
+    std::fs::copy(
+        inspection.config_dir.join("flake.lock"),
+        backup_dir.join("flake.lock"),
+    )?;
+    Ok(backup_dir)
+}
+
+fn restore_backup(
+    inspection: &MacosSetupInspection,
+    backup_dir: &Path,
+) -> Result<(), Box<dyn Error>> {
+    write_atomically(
+        &inspection.config_dir.join("flake.nix"),
+        &std::fs::read(backup_dir.join("flake.nix"))?,
+    )?;
+    write_atomically(
+        &inspection.config_dir.join("flake.lock"),
+        &std::fs::read(backup_dir.join("flake.lock"))?,
+    )?;
+    Ok(())
+}
+
+fn extract_user_settings_block(flake: &str) -> Result<String, Box<dyn Error>> {
+    const BEGIN: &str = "# BEGIN BUILDER-KIT USER SETTINGS";
+    const END: &str = "# END BUILDER-KIT USER SETTINGS";
+
+    let begin = flake
+        .find(BEGIN)
+        .ok_or("missing Builder Kit user settings begin marker")?;
+    let end_marker_start = flake
+        .find(END)
+        .ok_or("missing Builder Kit user settings end marker")?;
+    let end = end_marker_start + END.len();
+    Ok(flake[begin..end].to_owned())
+}
+
+fn download_url(url: &str, destination: &Path) -> Result<(), Box<dyn Error>> {
+    let parent = destination
+        .parent()
+        .ok_or("download destination has no parent directory")?;
+    std::fs::create_dir_all(parent)?;
+    run_command(
+        ProcessCommand::new("curl")
+            .arg("-fsSL")
+            .arg("-o")
+            .arg(destination)
+            .arg(url),
+    )
+}
+
+fn verify_sha256(path: &Path, expected: &str) -> Result<(), Box<dyn Error>> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 8192];
+
+    loop {
+        let bytes = file.read(&mut buffer)?;
+        if bytes == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes]);
+    }
+
+    let actual = hex_lower(&hasher.finalize());
+    if actual == expected.to_ascii_lowercase() {
+        Ok(())
+    } else {
+        Err(format!(
+            "artifact digest mismatch for {}: expected {expected}, got {actual}",
+            path.display()
+        )
+        .into())
+    }
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
+}
+
+fn unpack_tar_gz(archive: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
+    let file = File::open(archive)?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = Archive::new(decoder);
+    archive.unpack(destination)?;
+    Ok(())
+}
+
+fn parse_calver(version: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = version.split('.');
+    let year = parts.next()?.parse().ok()?;
+    let month = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((year, month, patch))
+}
+
+fn compare_calver(left: &str, right: &str) -> std::cmp::Ordering {
+    parse_calver(left).cmp(&parse_calver(right))
+}
+
+fn calver_gt(left: &str, right: &str) -> bool {
+    compare_calver(left, right).is_gt()
+}
+
+fn macos_update_plan(
+    inspection: &MacosSetupInspection,
+    installed: &InstallationState,
+    update: &ResolvedUpdate,
+    confirmed: bool,
+) -> Plan {
+    let mut lines = vec![
+        format!("Current Builder Kit version: {}.", installed.version),
+        format!("Selected Builder Kit version: {}.", update.version),
+        format!("Use artifact {}.", update.artifact.display()),
+        format!(
+            "Back up current flake files under {}.",
+            inspection.kit_root.join("backups").display()
+        ),
+        "Preserve the existing Builder Kit user settings block.".to_owned(),
+        "Replace flake.nix and flake.lock atomically.".to_owned(),
+        "Validate the candidate flake.".to_owned(),
+        "Activate nix-darwin/Home Manager unless --no-activate is set.".to_owned(),
+        "Run nix-store --gc after successful activation unless --no-gc is set.".to_owned(),
+        "Restore previous flake files if validation or activation fails.".to_owned(),
+    ];
+
+    if confirmed {
+        lines.push(
+            "Builder Kit confirmation has already been accepted for this command.".to_owned(),
+        );
+    }
+
+    Plan {
+        title: "Builder Kit update plan",
+        platform: HostPlatform::Macos,
+        lines,
+        confirmation: if confirmed {
+            Confirmation::NotRequired
+        } else {
+            Confirmation::Standard
+        },
+    }
 }
 
 fn macos_setup_plan(inspection: &MacosSetupInspection, channel: Channel, confirmed: bool) -> Plan {
