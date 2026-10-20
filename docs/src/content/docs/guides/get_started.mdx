@@ -1,118 +1,158 @@
 ---
 title: Getting started
-description: Preview the setup plan and set up a local Builder Kit environment on macOS.
+description: Install Builder Kit and set up your development environment on macOS or Windows.
 ---
 
+import { TabItem, Tabs } from "@astrojs/starlight/components";
 import Kit from "@/components/Kit.astro";
 
-<Kit /> sets up a development environment for your existing account using Nix, nix-darwin, and Home Manager. Start by reviewing what it will change, then approve setup when you are ready.
-
-:::caution[Early development]
-The one-command download-and-install flow is not ready yet. macOS setup currently requires a local configuration payload, and Windows setup can only print a plan. This guide describes the current local testing workflow, not a finished release installer.
-:::
+Set up your development environment with <Kit />. Download the command, review the setup plan, and let <Kit /> install and configure your tools. You do not need to learn Nix or write any configuration to get started.
 
 ## Before you begin
 
-For the macOS walkthrough, you need:
+You will need:
 
-- A Mac you are comfortable using to test system-level configuration changes, with administrator access.
-- An internet connection to fetch dependencies and packages.
-- Git and the Rust toolchain selected by the repository's `rust-toolchain.toml`.
-- A working Nix installation with flakes enabled, or a trusted, pinned upstream `nix-installer` binary supplied for testing.
-- Your full name and the email address you want to use for Git commits.
+- A Mac or a Windows PC with support for Windows Subsystem for Linux (WSL 2).
+- Administrator access for system changes.
+- An internet connection to download your tools.
+- Your name and the email address you want to use for Git commits.
 
-Back up important files before testing. Setup activates system and shell configuration; it is not isolated to the project directory.
+Save your work before starting. Windows may need to restart when enabling WSL.
 
 :::note[Already using Nix?]
-An existing Nix setup is not automatically a compatible setup. The current CLI checks whether Nix responds, but does not establish ownership or migration safety. If you already manage your Mac with nix-darwin or Home Manager, do not run activation over it without reviewing the generated configuration.
+<Kit /> is designed to set up a managed development environment, not migrate an existing one. If it detects an unsupported Nix installation or conflicting configuration, it will stop rather than overwrite it. You do not need to remove other WSL distributions to use <Kit />.
 :::
 
-## 1. Build the command and configuration
+## 1. Download kit
 
-Open Terminal and clone the repository:
+Download the executable for your operating system and architecture from the [latest release](https://github.com/ahappypie/builderkit/releases/latest).
 
-```sh
-git clone https://github.com/ahappypie/builderkit.git
-cd builderkit
-cargo build -p kit --release
-cargo run -p kit-assembler -- darwin --out dist/darwin
-```
+<Tabs>
+  <TabItem label="macOS">
+    Download `kit` and open Terminal. If you saved it in Downloads, run:
 
-The first command builds `target/release/kit`. The assembler produces `dist/darwin/flake.nix` and `dist/darwin/flake.lock`, which together describe the environment to install.
+    ```sh
+    cd ~/Downloads
+    chmod +x ./kit
+    ./kit --version
+    ```
+  </TabItem>
+  <TabItem label="Windows">
+    Download `kit.exe` and open PowerShell. If you saved it in Downloads, run:
 
-Run the remaining commands from this repository directory.
+    ```powershell
+    cd "$HOME\Downloads"
+    .\kit.exe --version
+    ```
 
-## 2. Preview the setup plan
+    Run the command on Windows, not inside an existing WSL distribution.
+  </TabItem>
+</Tabs>
 
-```sh
-./target/release/kit setup --dry-run
-```
+## 2. Review the setup plan
 
-This inspects your machine and prints a plan without changing it. Check the detected Nix state and configuration paths before continuing.
+Preview what <Kit /> will do without making changes:
 
-On macOS, <Kit /> uses:
+<Tabs>
+  <TabItem label="macOS">
+    ```sh
+    ./kit setup --dry-run
+    ```
+  </TabItem>
+  <TabItem label="Windows">
+    ```powershell
+    .\kit.exe setup --dry-run
+    ```
+  </TabItem>
+</Tabs>
 
-| Path | Purpose |
-| --- | --- |
-| `~/.local/bin/kit` | Installed command |
-| `~/.kit/nix/flake.nix` | Generated configuration, including your user settings |
-| `~/.kit/nix/flake.lock` | Pinned configuration dependencies |
-| `~/.kit/installer/` | Retained installer files |
-| `~/.kit/state/installation.json` | Local installation metadata |
+The plan is specific to your machine. It explains what will be installed, where your configuration will live, and whether administrator approval or a restart is needed.
 
-:::caution[The plan describes more than the current implementation]
-The plan mentions signed release downloads. The local setup path does not yet fetch or verify those releases: it reads the payload and optional installer you provide. Only use files you trust.
-:::
+On **macOS**, <Kit /> configures your existing account using Nix, nix-darwin, and Home Manager. On **Windows**, it sets up a dedicated WSL development environment without replacing your other distributions.
 
 ## 3. Run setup
 
-If Nix is already installed and responding:
+When you are ready, run setup without `--dry-run`:
+
+<Tabs>
+  <TabItem label="macOS">
+    ```sh
+    ./kit setup
+    ```
+  </TabItem>
+  <TabItem label="Windows">
+    ```powershell
+    .\kit.exe setup
+    ```
+  </TabItem>
+</Tabs>
+
+Review the plan and confirm that you want to proceed. Follow the prompts to enter your name, Git email, and preferences. On Windows, you will also choose a Linux username for your development environment; on macOS, <Kit /> uses your existing account.
+
+<Kit /> downloads the required files, verifies them, and installs your tools. You may be asked to approve system changes or confirm the Nix installation separately.
+
+:::tip[Asked to restart Windows?]
+Restart your PC, open PowerShell, and run the same setup command again. <Kit /> will check the prerequisites and continue setup.
+:::
+
+:::caution[Keep secrets out of your configuration]
+Your Git email is used for commit attribution, not authentication. Do not enter passwords, API keys, or access tokens as setup preferences. Sign in to individual tools using their own login flows after setup.
+:::
+
+## 4. Open your development environment
+
+Once setup reports success:
+
+<Tabs>
+  <TabItem label="macOS">
+    Open a new Terminal window so your shell picks up the installed tools and configuration.
+  </TabItem>
+  <TabItem label="Windows">
+    Open the Builder Kit distribution from Windows Terminal. This is where you will run your development tools and work on your projects.
+  </TabItem>
+</Tabs>
+
+Check your Git identity:
 
 ```sh
-./target/release/kit setup --payload-dir ./dist/darwin
-```
-
-If Nix is absent, also supply the trusted upstream installer binary. Replace the example path with its actual location:
-
-```sh
-./target/release/kit setup \
-  --payload-dir ./dist/darwin \
-  --nix-installer /absolute/path/to/nix-installer
-```
-
-Review the plan and answer the confirmation prompt. Setup asks for your full name and Git email, uses your existing macOS username and home directory, writes the configuration, validates it, and activates nix-darwin and Home Manager.
-
-The upstream Nix installer can ask for its own confirmation, and system changes may require your administrator password. Do not put passwords, API keys, or access tokens into the generated configuration. Authenticate individual tools using their own supported login flows after setup.
-
-## 4. Check your environment
-
-After setup finishes successfully, open a new Terminal window and check:
-
-```sh
-~/.local/bin/kit --version
-nix --version
+git --version
 git config --get user.name
 git config --get user.email
 ```
 
-The Git identity should match the values you entered. If `kit` is available on your shell's `PATH`, you can use `kit` instead of `~/.local/bin/kit`.
+Your name and email should match the values you entered during setup. You are ready to start a project!
 
-Your configuration lives in `~/.kit/nix/`. Keep `flake.lock` beside `flake.nix`; it pins the dependency versions used to build the environment.
+If you use GitHub or coding agents, follow each tool's sign-in instructions before using features that require an account. <Kit /> installs tools, but does not supply subscriptions or credentials.
 
-## If something goes wrong
+## Keep your tools up to date
 
-- **`kit: command not found`:** use `~/.local/bin/kit`, or open a new terminal after successful activation.
-- **Nix is present but unhealthy:** stop and diagnose the existing Nix installation before retrying. Setup does not repair it automatically.
-- **The machine already appears managed:** do not rerun setup to update it. Inspect the existing installation first.
-- **The configuration directory is incomplete or unrelated:** inspect `~/.kit/nix/` and preserve any files you need. Do not delete it blindly to get past the check.
-- **Validation or activation fails:** keep the error output and inspect the generated configuration before making further changes. A failed setup may have already written files or installed Nix.
+Run management commands from Terminal on macOS or PowerShell on Windows. On Windows, use `kit.exe` rather than running the command inside WSL.
 
-For help, open a [GitHub discussion](https://github.com/ahappypie/builderkit/discussions) with the failed command and relevant error output. Remove personal information and secrets before posting.
+Check whether an update is available:
 
-## What about Windows?
+```sh
+kit update --check
+```
 
-Windows support is in development. A built Windows CLI can preview the intended WSL setup with `kit.exe setup --dry-run`, but it cannot yet install or configure the distribution. Running `kit setup` inside a Linux or WSL shell is not a supported alternative.
+To install an update:
 
-:::note[Updates and removal]
-The current macOS CLI includes update commands, but the local setup workflow above is not a complete managed release installation. `kit eject` is also not implemented yet; do not rely on it as an undo or uninstall command.
+```sh
+kit update
+```
+
+<Kit /> shows the proposed changes and asks for confirmation before applying them. Updates can change package versions and behavior, so review the plan before proceeding.
+
+:::note[Running from your download folder]
+If `kit` is not on your command path, use the executable directly: `./kit` on macOS or `.\kit.exe` in PowerShell.
 :::
+
+## Need help?
+
+If setup stops, read the reported reason before retrying. <Kit /> will not overwrite an unrelated configuration or automatically repair an unhealthy Nix installation.
+
+- **Command not found:** open a new terminal, or run the executable directly from the folder where you downloaded it.
+- **Restart required:** restart Windows and rerun setup.
+- **Already managed:** use `kit update` instead of running setup again.
+- **Conflicting configuration or failed installation:** preserve your existing files and the error output. Do not delete configuration directories just to bypass a check.
+
+Ask for help in [GitHub Discussions](https://github.com/ahappypie/builderkit/discussions). Include your operating system, the command you ran, and the relevant error message. Remove personal information and secrets before posting.
