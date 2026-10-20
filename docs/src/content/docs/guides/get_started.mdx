@@ -1,0 +1,118 @@
+---
+title: Getting started
+description: Preview the setup plan and set up a local Builder Kit environment on macOS.
+---
+
+import Kit from "@/components/Kit.astro";
+
+<Kit /> sets up a development environment for your existing account using Nix, nix-darwin, and Home Manager. Start by reviewing what it will change, then approve setup when you are ready.
+
+:::caution[Early development]
+The one-command download-and-install flow is not ready yet. macOS setup currently requires a local configuration payload, and Windows setup can only print a plan. This guide describes the current local testing workflow, not a finished release installer.
+:::
+
+## Before you begin
+
+For the macOS walkthrough, you need:
+
+- A Mac you are comfortable using to test system-level configuration changes, with administrator access.
+- An internet connection to fetch dependencies and packages.
+- Git and the Rust toolchain selected by the repository's `rust-toolchain.toml`.
+- A working Nix installation with flakes enabled, or a trusted, pinned upstream `nix-installer` binary supplied for testing.
+- Your full name and the email address you want to use for Git commits.
+
+Back up important files before testing. Setup activates system and shell configuration; it is not isolated to the project directory.
+
+:::note[Already using Nix?]
+An existing Nix setup is not automatically a compatible setup. The current CLI checks whether Nix responds, but does not establish ownership or migration safety. If you already manage your Mac with nix-darwin or Home Manager, do not run activation over it without reviewing the generated configuration.
+:::
+
+## 1. Build the command and configuration
+
+Open Terminal and clone the repository:
+
+```sh
+git clone https://github.com/ahappypie/builderkit.git
+cd builderkit
+cargo build -p kit --release
+cargo run -p kit-assembler -- darwin --out dist/darwin
+```
+
+The first command builds `target/release/kit`. The assembler produces `dist/darwin/flake.nix` and `dist/darwin/flake.lock`, which together describe the environment to install.
+
+Run the remaining commands from this repository directory.
+
+## 2. Preview the setup plan
+
+```sh
+./target/release/kit setup --dry-run
+```
+
+This inspects your machine and prints a plan without changing it. Check the detected Nix state and configuration paths before continuing.
+
+On macOS, <Kit /> uses:
+
+| Path | Purpose |
+| --- | --- |
+| `~/.local/bin/kit` | Installed command |
+| `~/.kit/nix/flake.nix` | Generated configuration, including your user settings |
+| `~/.kit/nix/flake.lock` | Pinned configuration dependencies |
+| `~/.kit/installer/` | Retained installer files |
+| `~/.kit/state/installation.json` | Local installation metadata |
+
+:::caution[The plan describes more than the current implementation]
+The plan mentions signed release downloads. The local setup path does not yet fetch or verify those releases: it reads the payload and optional installer you provide. Only use files you trust.
+:::
+
+## 3. Run setup
+
+If Nix is already installed and responding:
+
+```sh
+./target/release/kit setup --payload-dir ./dist/darwin
+```
+
+If Nix is absent, also supply the trusted upstream installer binary. Replace the example path with its actual location:
+
+```sh
+./target/release/kit setup \
+  --payload-dir ./dist/darwin \
+  --nix-installer /absolute/path/to/nix-installer
+```
+
+Review the plan and answer the confirmation prompt. Setup asks for your full name and Git email, uses your existing macOS username and home directory, writes the configuration, validates it, and activates nix-darwin and Home Manager.
+
+The upstream Nix installer can ask for its own confirmation, and system changes may require your administrator password. Do not put passwords, API keys, or access tokens into the generated configuration. Authenticate individual tools using their own supported login flows after setup.
+
+## 4. Check your environment
+
+After setup finishes successfully, open a new Terminal window and check:
+
+```sh
+~/.local/bin/kit --version
+nix --version
+git config --get user.name
+git config --get user.email
+```
+
+The Git identity should match the values you entered. If `kit` is available on your shell's `PATH`, you can use `kit` instead of `~/.local/bin/kit`.
+
+Your configuration lives in `~/.kit/nix/`. Keep `flake.lock` beside `flake.nix`; it pins the dependency versions used to build the environment.
+
+## If something goes wrong
+
+- **`kit: command not found`:** use `~/.local/bin/kit`, or open a new terminal after successful activation.
+- **Nix is present but unhealthy:** stop and diagnose the existing Nix installation before retrying. Setup does not repair it automatically.
+- **The machine already appears managed:** do not rerun setup to update it. Inspect the existing installation first.
+- **The configuration directory is incomplete or unrelated:** inspect `~/.kit/nix/` and preserve any files you need. Do not delete it blindly to get past the check.
+- **Validation or activation fails:** keep the error output and inspect the generated configuration before making further changes. A failed setup may have already written files or installed Nix.
+
+For help, open a [GitHub discussion](https://github.com/ahappypie/builderkit/discussions) with the failed command and relevant error output. Remove personal information and secrets before posting.
+
+## What about Windows?
+
+Windows support is in development. A built Windows CLI can preview the intended WSL setup with `kit.exe setup --dry-run`, but it cannot yet install or configure the distribution. Running `kit setup` inside a Linux or WSL shell is not a supported alternative.
+
+:::note[Updates and removal]
+The current macOS CLI includes update commands, but the local setup workflow above is not a complete managed release installation. `kit eject` is also not implemented yet; do not rely on it as an undo or uninstall command.
+:::

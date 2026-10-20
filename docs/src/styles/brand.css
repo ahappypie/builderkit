@@ -1,0 +1,25 @@
+:root {
+    --cp-blue: #5393e8;
+
+    --color-brand: var(--cp-blue);
+
+    --sl-color-accent-high: var(--sl-color-blue-high);
+    --sl-color-accent: var(--sl-color-blue);
+    --sl-color-accent-low: var(--sl-color-blue-low);
+}
+
+:root[data-theme="light"] {
+    --cp-blue: #2c8cf1;
+
+    --sl-color-accent-high: var(--sl-color-blue-high);
+    --sl-color-accent: var(--sl-color-blue);
+    --sl-color-accent-low: var(--sl-color-blue-low);
+}
+
+h1[data-page-title],
+a.site-title,
+code.kit {
+    font-family: var(--__sl-font-mono);
+    font-weight: bold;
+    color: var(--color-brand);
+}

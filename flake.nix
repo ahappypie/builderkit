@@ -24,6 +24,10 @@
         (final: prev: {
           rustToolchain = final.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
         })
+        (final: prev: {
+          nodejs = prev.nodejs_26;
+          pnpm = prev.pnpm_11;
+        })
       ];
 
       # Systems supported
@@ -58,6 +62,9 @@
             taplo
             actionlint
             zizmor
+
+            nodejs
+            pnpm
           ];
         in
         {

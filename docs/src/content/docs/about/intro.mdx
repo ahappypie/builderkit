@@ -1,0 +1,46 @@
+---
+title: Introduction
+description:
+    kit is an opinionated starter kit for software development that uses nix under the hood.
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+import Kit from "@/components/Kit.astro";
+
+<Kit /> is an opinionated starter kit for software development, based on the Nix ecosystem. It automatically (and safely)
+installs and manages a fleet of coding tools, including agent harnesses, command line tools and runtimes so you can build
+faster and with more confidence.
+
+Regardless if you are new to software development, have years of experience (or are an agent yourself) <Kit /> is a game-changer.
+It brings the confidence of knowing your tools always work the same way and the breadth of the largest package repository in the world
+right to your machine without any added complexity.
+
+## Features
+
+<CardGrid>
+    <Card title="Availability" icon="star">
+        <Kit /> works across platforms, with support for macOS and Windows, via Windows Subsystem for Linux (WSL).
+    </Card>
+    <Card title="Speed" icon="rocket">
+        <Kit /> itself is performant (written in Rust). It takes advantage of the Nixpkgs cache to download all of your
+        tools efficiently.
+    </Card>
+    <Card title="Accuracy" icon="padlock">
+        <Kit /> delegates package management to Nix, a deterministic build engine. Every release is guaranteed to be
+        reproducible on any machine.
+    </Card>
+    <Card title="Flexibility" icon="nix">
+        <Kit /> grants access to the entire Nixpkgs repository (over 140,000 packages). On macOS, <Kit /> also manages
+        Homebrew packages.
+    </Card>
+    <Card title="Confidence" icon="approve-check">
+        <Kit /> has sensible defaults and won't make any changes without your approval.
+    </Card>
+</CardGrid>
+
+[Compare](/about/comparison/) <Kit /> to other package management options, including `brew`, `scoop` and `nix` itself.
+
+## More info
+
+For more information, take a look at the [FAQs](/about/faq/). If your question isn't answered there,
+feel free to start a [GitHub discussion](https://github.com/ahappypie/builderkit/discussions).
