@@ -34,7 +34,7 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: assemble darwin artifact from tag
-        run: nix develop -c just assemble darwin dist/darwin
+        run: nix develop -c just assemble darwin
 
       - name: check artifact
         run: nix flake check "path:$PWD/dist/darwin"
