@@ -2,20 +2,18 @@ use std::{
     env,
     error::Error,
     fmt::{self, Write as _},
-    fs::File,
-    io::{self, Read, Write},
+    io::{self, Write},
     path::{Path, PathBuf},
-    process::{Command as ProcessCommand, Stdio},
+    process::Command as ProcessCommand,
 };
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use clap::{Parser, Subcommand, ValueEnum};
-use flate2::read::GzDecoder;
+use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use tar::Archive;
+
+mod release;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Builder Kit host setup and update tool")]
@@ -37,6 +35,10 @@ enum Command {
 }
 
 #[derive(clap::Args, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "these fields mirror CLI flags"
+)]
 struct SetupArgs {
     /// Print the setup plan without changing the machine.
     #[arg(long)]
@@ -46,17 +48,13 @@ struct SetupArgs {
     #[arg(long)]
     yes: bool,
 
-    /// Release channel to install.
-    #[arg(long, value_enum, default_value_t = Channel::Stable)]
-    channel: Channel,
+    /// Exact release to install (YYYY.MM.PATCH). No latest resolution.
+    #[arg(long, value_parser = release::validate_version)]
+    version: String,
 
-    /// Local verified macOS payload directory containing flake.nix and flake.lock.
-    #[arg(long)]
-    payload_dir: Option<PathBuf>,
-
-    /// Local pinned upstream nix-installer binary to use when Nix is absent.
-    #[arg(long)]
-    nix_installer: Option<PathBuf>,
+    /// Download setup files without installing Nix or changing configuration.
+    #[arg(long, conflicts_with_all = ["dry_run", "no_activate"])]
+    download_only: bool,
 
     /// Write and validate configuration but do not run nix-darwin switch.
     #[arg(long)]
@@ -77,17 +75,13 @@ struct UpdateArgs {
     #[arg(long)]
     yes: bool,
 
-    /// Local release artifact tarball containing flake.nix and flake.lock.
-    #[arg(long)]
-    artifact: Option<PathBuf>,
+    /// Exact release to install (YYYY.MM.PATCH). No latest resolution.
+    #[arg(long, value_parser = release::validate_version)]
+    version: String,
 
-    /// Version for a local artifact update.
-    #[arg(long)]
-    version: Option<String>,
-
-    /// Release index URL for static-site updates.
-    #[arg(long, default_value = "https://builderkit.dev/releases/index.json")]
-    release_index: String,
+    /// Print the update plan without downloads or changes.
+    #[arg(long, conflicts_with = "check")]
+    dry_run: bool,
 
     /// Write and validate configuration but do not run nix-darwin switch.
     #[arg(long)]
@@ -103,21 +97,6 @@ struct EjectArgs {
     /// Accept Builder Kit prompts.
     #[arg(long)]
     yes: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum Channel {
-    Stable,
-    Edge,
-}
-
-impl fmt::Display for Channel {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Stable => formatter.write_str("stable"),
-            Self::Edge => formatter.write_str("edge"),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,7 +189,7 @@ fn setup(platform: HostPlatform, args: &SetupArgs) -> Result<(), Box<dyn Error>>
         HostPlatform::Macos => setup_macos(args),
         HostPlatform::Windows => setup_windows(args),
         HostPlatform::Unsupported => {
-            let plan = setup_plan(platform, args.channel, args.yes || args.dry_run);
+            let plan = setup_plan(platform, &args.version, args.yes || args.dry_run);
             print!("{}", plan.render());
             Err("Builder Kit setup is supported only on Windows and macOS".into())
         }
@@ -220,7 +199,7 @@ fn setup(platform: HostPlatform, args: &SetupArgs) -> Result<(), Box<dyn Error>>
 fn setup_windows(args: &SetupArgs) -> Result<(), Box<dyn Error>> {
     let plan = setup_plan(
         HostPlatform::Windows,
-        args.channel,
+        &args.version,
         args.yes || args.dry_run,
     );
     print!("{}", plan.render());
@@ -233,19 +212,21 @@ fn setup_windows(args: &SetupArgs) -> Result<(), Box<dyn Error>> {
 }
 
 fn setup_macos(args: &SetupArgs) -> Result<(), Box<dyn Error>> {
+    ensure_macos_architecture(env::consts::ARCH)?;
     let inspection = MacosSetupInspection::inspect()?;
-    let plan = macos_setup_plan(&inspection, args.channel, args.yes || args.dry_run);
+    let plan = macos_setup_plan(&inspection, args);
     print!("{}", plan.render());
 
     if args.dry_run {
         return Ok(());
     }
 
+    inspection.ensure_supported()?;
+
     if !args.yes && !confirm_standard()? {
         return Err("setup cancelled".into());
     }
 
-    inspection.ensure_supported()?;
     execute_macos_setup(&inspection, args)
 }
 
@@ -253,16 +234,26 @@ fn update(platform: HostPlatform, args: &UpdateArgs) -> Result<(), Box<dyn Error
     match platform {
         HostPlatform::Macos => update_macos(args),
         HostPlatform::Windows => {
-            let plan = update_plan(platform, args.check, args.yes || args.check);
+            let plan = update_plan(
+                platform,
+                &args.version,
+                args.check,
+                args.yes || args.check || args.dry_run,
+            );
             print!("{}", plan.render());
-            if args.check {
+            if args.dry_run {
                 Ok(())
             } else {
                 Err("Windows update execution is not implemented yet".into())
             }
         }
         HostPlatform::Unsupported => {
-            let plan = update_plan(platform, args.check, args.yes || args.check);
+            let plan = update_plan(
+                platform,
+                &args.version,
+                args.check,
+                args.yes || args.check || args.dry_run,
+            );
             print!("{}", plan.render());
             Err("Builder Kit update is supported only on Windows and macOS".into())
         }
@@ -270,21 +261,33 @@ fn update(platform: HostPlatform, args: &UpdateArgs) -> Result<(), Box<dyn Error
 }
 
 fn update_macos(args: &UpdateArgs) -> Result<(), Box<dyn Error>> {
+    ensure_macos_architecture(env::consts::ARCH)?;
     let inspection = MacosSetupInspection::inspect()?;
     let installed = InstallationState::load(&inspection.kit_root)?
         .ok_or("Builder Kit is not installed; expected ~/.kit/state/installation.json")?;
-    let update = resolve_macos_update(&inspection, args, &installed)?;
-    let plan = macos_update_plan(&inspection, &installed, &update, args.yes || args.check);
+    let update = ResolvedUpdate {
+        version: args.version.clone(),
+    };
+    let plan = macos_update_plan(&inspection, &installed, &update, args);
     print!("{}", plan.render());
-
-    if args.check {
+    if args.dry_run {
         return Ok(());
     }
-
+    if installed.version == args.version {
+        println!("Builder Kit {} is already installed.", args.version);
+        return Ok(());
+    }
+    if !calver_gt(&args.version, &installed.version) {
+        return Err("requested release is not newer than the installed version; preview downgrades are not supported".into());
+    }
+    if args.check {
+        release::check_available(&args.version)?;
+        println!("Builder Kit {} is available.", args.version);
+        return Ok(());
+    }
     if !args.yes && !confirm_standard()? {
         return Err("update cancelled".into());
     }
-
     apply_macos_update(&inspection, args, &update)
 }
 
@@ -357,31 +360,6 @@ impl MacosSetupInspection {
 #[derive(Debug)]
 struct ResolvedUpdate {
     version: String,
-    artifact: PathBuf,
-    sha256: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ReleaseIndex {
-    releases: Vec<ReleaseEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ReleaseEntry {
-    version: String,
-    platforms: ReleasePlatforms,
-}
-
-#[derive(Debug, Deserialize)]
-struct ReleasePlatforms {
-    darwin: Option<ReleaseArtifact>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ReleaseArtifact {
-    artifact_url: String,
-    sha256: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -527,35 +505,58 @@ fn confirm_standard() -> Result<bool, Box<dyn Error>> {
     Ok(matches!(line.trim(), "y" | "Y" | "yes" | "YES" | "Yes"))
 }
 
+fn ensure_macos_architecture(architecture: &str) -> Result<(), Box<dyn Error>> {
+    if architecture != "aarch64" {
+        return Err("this preview supports only native Apple Silicon (arm64) macOS".into());
+    }
+    Ok(())
+}
+
 fn execute_macos_setup(
     inspection: &MacosSetupInspection,
     args: &SetupArgs,
 ) -> Result<(), Box<dyn Error>> {
+    let payload = release::prepare_payload(&inspection.kit_root, &args.version)?;
+    let installer = if inspection.nix_state == NixState::Absent {
+        Some(release::prepare_installer(&inspection.installer_dir)?)
+    } else {
+        None
+    };
+
+    if args.download_only {
+        println!(
+            "Downloads completed for {}. Nix was not installed; no configuration, command, or installation state was written.",
+            args.version
+        );
+        return Ok(());
+    }
+
+    println!(
+        "Ready to install Builder Kit {}. System changes may request administrator authentication.",
+        args.version
+    );
+    if !args.yes {
+        print!("Install and configure this release? [y/N] ");
+        if !confirm_standard()? {
+            return Err("setup cancelled; downloads have been retained".into());
+        }
+    }
+
+    let settings = prompt_user_settings(&inspection.current_user, &inspection.home_dir)?;
+    let flake = replace_user_settings_block(&payload.flake, &settings.to_nix_block())?;
+
     if inspection.nix_state == NixState::Absent {
-        let installer = args
-            .nix_installer
-            .as_ref()
-            .ok_or("Nix is absent; pass --nix-installer <path> for this test setup path")?;
-        std::fs::create_dir_all(&inspection.installer_dir)?;
-        let installer = retain_installer(installer, &inspection.installer_dir)?;
-        prepare_local_executable(&installer)?;
+        let installer = installer.as_ref().ok_or("missing Nix installer")?;
+        prepare_local_executable(installer)?;
         run_command(
-            ProcessCommand::new(&installer)
+            ProcessCommand::new("sudo")
+                .arg(installer)
                 .arg("install")
                 .arg("--enable-flakes"),
         )?;
     }
 
     let nix = resolve_nix_executable()?;
-
-    let payload_dir = args
-        .payload_dir
-        .as_ref()
-        .ok_or("pass --payload-dir <dir> containing flake.nix and flake.lock")?;
-
-    let payload = MacosPayload::from_dir(payload_dir)?;
-    let settings = prompt_user_settings(&inspection.current_user, &inspection.home_dir)?;
-    let flake = replace_user_settings_block(&payload.flake, &settings.to_nix_block())?;
 
     install_self_to_local_bin(&inspection.local_bin)?;
 
@@ -574,14 +575,18 @@ fn execute_macos_setup(
             .arg(format!("path:{}", inspection.config_dir.display())),
     )?;
 
-    if !args.no_activate {
-        run_darwin_activation(&nix, &inspection.config_dir)?;
+    if args.no_activate {
+        println!(
+            "Configuration validated but not activated; installation has not been marked complete."
+        );
+        return Ok(());
     }
+    run_darwin_activation(&nix, &inspection.config_dir)?;
 
     InstallationState {
         schema_version: 1,
         platform: "darwin".to_owned(),
-        version: "0.0.0-local".to_owned(),
+        version: args.version.clone(),
         config_dir: inspection.config_dir.clone(),
     }
     .save(&inspection.kit_root)?;
@@ -600,10 +605,19 @@ struct MacosPayload {
 }
 
 impl MacosPayload {
-    fn from_dir(directory: &Path) -> Result<Self, Box<dyn Error>> {
-        let flake = std::fs::read_to_string(directory.join("flake.nix"))?;
-        let lock = std::fs::read_to_string(directory.join("flake.lock"))?;
-        Ok(Self { flake, lock })
+    fn validate(&self) -> Result<(), Box<dyn Error>> {
+        let settings = extract_user_settings_block(&self.flake)?;
+        replace_user_settings_block(&self.flake, &settings)?;
+        if !self
+            .flake
+            .contains("# BEGIN BUILDER-KIT MANAGED IMPLEMENTATION")
+        {
+            return Err(
+                "configuration is missing the Builder Kit managed implementation marker".into(),
+            );
+        }
+        let _: serde_json::Value = serde_json::from_str(&self.lock)?;
+        Ok(())
     }
 }
 
@@ -648,7 +662,9 @@ fn prompt_required(label: &str) -> Result<String, Box<dyn Error>> {
         io::stdout().flush()?;
 
         let mut line = String::new();
-        io::stdin().read_line(&mut line)?;
+        if io::stdin().read_line(&mut line)? == 0 {
+            return Err(format!("input ended while reading {label}").into());
+        }
         let value = line.trim().to_owned();
 
         if !value.is_empty() {
@@ -669,12 +685,13 @@ fn replace_user_settings_block(flake: &str, replacement: &str) -> Result<String,
     let end_marker_start = flake
         .find(END)
         .ok_or("missing Builder Kit user settings end marker")?;
-    let end = end_marker_start + END.len();
-
-    if flake[end..].contains(BEGIN) || flake[end..].contains(END) || flake[..begin].contains(BEGIN)
+    if end_marker_start < begin
+        || flake.matches(BEGIN).count() != 1
+        || flake.matches(END).count() != 1
     {
-        return Err("duplicate Builder Kit user settings marker".into());
+        return Err("invalid or duplicate Builder Kit user settings markers".into());
     }
+    let end = end_marker_start + END.len();
 
     let mut output = String::with_capacity(flake.len() + replacement.len());
     output.push_str(&flake[..begin]);
@@ -684,7 +701,10 @@ fn replace_user_settings_block(flake: &str, replacement: &str) -> Result<String,
 }
 
 fn escape_nix_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace("${", "\\${")
 }
 
 fn install_self_to_local_bin(local_bin: &Path) -> Result<(), Box<dyn Error>> {
@@ -702,19 +722,6 @@ fn install_self_to_local_bin(local_bin: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn retain_installer(source: &Path, installer_dir: &Path) -> Result<PathBuf, Box<dyn Error>> {
-    let file_name = source
-        .file_name()
-        .ok_or_else(|| format!("installer path has no file name: {}", source.display()))?;
-    let destination = installer_dir.join(file_name);
-
-    if source != destination {
-        std::fs::copy(source, &destination)?;
-    }
-
-    Ok(destination)
-}
-
 fn prepare_local_executable(path: &Path) -> Result<(), Box<dyn Error>> {
     if !path.exists() {
         return Err(format!("executable does not exist: {}", path.display()).into());
@@ -726,17 +733,6 @@ fn prepare_local_executable(path: &Path) -> Result<(), Box<dyn Error>> {
         let mut permissions = metadata.permissions();
         permissions.set_mode(permissions.mode() | 0o755);
         std::fs::set_permissions(path, permissions)?;
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let _ = ProcessCommand::new("xattr")
-            .arg("-d")
-            .arg("com.apple.quarantine")
-            .arg(path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
     }
 
     Ok(())
@@ -777,6 +773,8 @@ fn run_darwin_activation(nix: &Path, config_dir: &Path) -> Result<(), Box<dyn Er
             .arg("-H")
             .arg(nix)
             .arg("run")
+            .arg("--inputs-from")
+            .arg(format!("path:{}", config_dir.display()))
             .arg("nix-darwin")
             .arg("--")
             .arg("switch")
@@ -802,72 +800,12 @@ fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
-fn resolve_macos_update(
-    inspection: &MacosSetupInspection,
-    args: &UpdateArgs,
-    installed: &InstallationState,
-) -> Result<ResolvedUpdate, Box<dyn Error>> {
-    if let Some(artifact) = &args.artifact {
-        return Ok(ResolvedUpdate {
-            version: args
-                .version
-                .clone()
-                .unwrap_or_else(|| "0.0.0-local".to_owned()),
-            artifact: artifact.clone(),
-            sha256: None,
-        });
-    }
-
-    let cache_dir = inspection.kit_root.join("cache").join("updates");
-    std::fs::create_dir_all(&cache_dir)?;
-    let index_path = cache_dir.join("index.json");
-    download_url(&args.release_index, &index_path)?;
-
-    let index: ReleaseIndex = serde_json::from_str(&std::fs::read_to_string(&index_path)?)?;
-    let release = index
-        .releases
-        .iter()
-        .filter(|release| release.platforms.darwin.is_some())
-        .filter(|release| calver_gt(&release.version, &installed.version))
-        .max_by(|left, right| compare_calver(&left.version, &right.version))
-        .ok_or("no newer Darwin release is available")?;
-
-    let artifact = release
-        .platforms
-        .darwin
-        .as_ref()
-        .ok_or("selected release is missing Darwin artifact metadata")?;
-    let artifact_path = cache_dir.join(format!("builderkit-darwin-{}.tar.gz", release.version));
-    download_url(&artifact.artifact_url, &artifact_path)?;
-
-    Ok(ResolvedUpdate {
-        version: release.version.clone(),
-        artifact: artifact_path,
-        sha256: Some(artifact.sha256.clone()),
-    })
-}
-
 fn apply_macos_update(
     inspection: &MacosSetupInspection,
     args: &UpdateArgs,
     update: &ResolvedUpdate,
 ) -> Result<(), Box<dyn Error>> {
-    if let Some(expected) = &update.sha256 {
-        verify_sha256(&update.artifact, expected)?;
-    }
-
-    let unpacked = inspection
-        .kit_root
-        .join("cache")
-        .join("unpacked")
-        .join(&update.version);
-    if unpacked.exists() {
-        std::fs::remove_dir_all(&unpacked)?;
-    }
-    std::fs::create_dir_all(&unpacked)?;
-    unpack_tar_gz(&update.artifact, &unpacked)?;
-
-    let payload = MacosPayload::from_dir(&unpacked)?;
+    let payload = release::prepare_payload(&inspection.kit_root, &update.version)?;
     let current_flake_path = inspection.config_dir.join("flake.nix");
     let current_lock_path = inspection.config_dir.join("flake.lock");
     let current_flake = std::fs::read_to_string(&current_flake_path)?;
@@ -907,6 +845,13 @@ fn apply_macos_update(
         && let Err(error) = run_nix_store_gc(&nix)
     {
         eprintln!("warning: nix-store --gc failed after successful activation: {error}");
+    }
+
+    if args.no_activate {
+        println!(
+            "Update configuration validated but not activated; installed version is unchanged."
+        );
+        return Ok(());
     }
 
     InstallationState {
@@ -966,63 +911,14 @@ fn extract_user_settings_block(flake: &str) -> Result<String, Box<dyn Error>> {
     let end_marker_start = flake
         .find(END)
         .ok_or("missing Builder Kit user settings end marker")?;
+    if end_marker_start < begin
+        || flake.matches(BEGIN).count() != 1
+        || flake.matches(END).count() != 1
+    {
+        return Err("invalid or duplicate Builder Kit user settings markers".into());
+    }
     let end = end_marker_start + END.len();
     Ok(flake[begin..end].to_owned())
-}
-
-fn download_url(url: &str, destination: &Path) -> Result<(), Box<dyn Error>> {
-    let parent = destination
-        .parent()
-        .ok_or("download destination has no parent directory")?;
-    std::fs::create_dir_all(parent)?;
-    run_command(
-        ProcessCommand::new("curl")
-            .arg("-fsSL")
-            .arg("-o")
-            .arg(destination)
-            .arg(url),
-    )
-}
-
-fn verify_sha256(path: &Path, expected: &str) -> Result<(), Box<dyn Error>> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 8192];
-
-    loop {
-        let bytes = file.read(&mut buffer)?;
-        if bytes == 0 {
-            break;
-        }
-        hasher.update(&buffer[..bytes]);
-    }
-
-    let actual = hex_lower(&hasher.finalize());
-    if actual == expected.to_ascii_lowercase() {
-        Ok(())
-    } else {
-        Err(format!(
-            "artifact digest mismatch for {}: expected {expected}, got {actual}",
-            path.display()
-        )
-        .into())
-    }
-}
-
-fn hex_lower(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(output, "{byte:02x}");
-    }
-    output
-}
-
-fn unpack_tar_gz(archive: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
-    let file = File::open(archive)?;
-    let decoder = GzDecoder::new(file);
-    let mut archive = Archive::new(decoder);
-    archive.unpack(destination)?;
-    Ok(())
 }
 
 fn parse_calver(version: &str) -> Option<(u32, u32, u32)> {
@@ -1048,30 +944,41 @@ fn macos_update_plan(
     inspection: &MacosSetupInspection,
     installed: &InstallationState,
     update: &ResolvedUpdate,
-    confirmed: bool,
+    args: &UpdateArgs,
 ) -> Plan {
+    let confirmed = args.yes || args.check || args.dry_run;
     let mut lines = vec![
         format!("Current Builder Kit version: {}.", installed.version),
         format!("Selected Builder Kit version: {}.", update.version),
-        format!("Use artifact {}.", update.artifact.display()),
         format!(
-            "Back up current flake files under {}.",
-            inspection.kit_root.join("backups").display()
+            "Use configuration URL {}.",
+            release::configuration_url(&update.version).expect("validated release version")
         ),
-        "Preserve the existing Builder Kit user settings block.".to_owned(),
-        "Replace flake.nix and flake.lock atomically.".to_owned(),
-        "Validate the candidate flake.".to_owned(),
-        "Activate nix-darwin/Home Manager unless --no-activate is set.".to_owned(),
-        "Run nix-store --gc after successful activation unless --no-gc is set.".to_owned(),
-        "Restore previous flake files if validation or activation fails.".to_owned(),
+        "Preview: trust GitHub/HTTPS; no signatures or hash checks are performed.".to_owned(),
     ];
-
-    if confirmed {
-        lines.push(
-            "Builder Kit confirmation has already been accepted for this command.".to_owned(),
-        );
+    if args.check {
+        lines.push("Check whether the requested release is available WITHOUT downloading or modifying files.".to_owned());
+    } else {
+        lines.extend([
+            "Download the requested release configuration.".to_owned(),
+            format!(
+                "Back up current flake files under {}.",
+                inspection.kit_root.join("backups").display()
+            ),
+            "Preserve the existing Builder Kit user settings block.".to_owned(),
+            "Replace flake.nix and flake.lock atomically and validate the candidate flake."
+                .to_owned(),
+            if args.no_activate {
+                "Stop without activation or changing the installed version.".to_owned()
+            } else {
+                "Activate nix-darwin/Home Manager for the current macOS user.".to_owned()
+            },
+            "Restore previous flake files if validation or activation fails.".to_owned(),
+        ]);
+        if !args.no_gc && !args.no_activate {
+            lines.push("Run nix-store --gc after successful activation.".to_owned());
+        }
     }
-
     Plan {
         title: "Builder Kit update plan",
         platform: HostPlatform::Macos,
@@ -1084,7 +991,12 @@ fn macos_update_plan(
     }
 }
 
-fn macos_setup_plan(inspection: &MacosSetupInspection, channel: Channel, confirmed: bool) -> Plan {
+#[expect(
+    clippy::too_many_lines,
+    reason = "keep the ordered setup plan together"
+)]
+fn macos_setup_plan(inspection: &MacosSetupInspection, args: &SetupArgs) -> Plan {
+    let confirmed = args.yes || args.dry_run;
     let mut lines = vec![
         format!(
             "Use executable directory {}.",
@@ -1095,13 +1007,17 @@ fn macos_setup_plan(inspection: &MacosSetupInspection, channel: Channel, confirm
             inspection.kit_root.display()
         ),
         format!(
-            "Use installer and manifest cache directory {}.",
+            "Use installer directory {}.",
             inspection.installer_dir.display()
         ),
-        format!(
-            "Install the kit command to {}.",
-            inspection.local_bin.display()
-        ),
+        if args.download_only {
+            "Leave the installed kit command unchanged.".to_owned()
+        } else {
+            format!(
+                "Install the kit command to {}.",
+                inspection.local_bin.display()
+            )
+        },
         format!(
             "Inspect current macOS user {} with home directory {}.",
             inspection.current_user,
@@ -1113,14 +1029,36 @@ fn macos_setup_plan(inspection: &MacosSetupInspection, channel: Channel, confirm
         ),
         format!("Detected Nix state: {}.", inspection.nix_state),
         format!("Detected configuration state: {}.", inspection.config_state),
-        format!("Fetch and verify the signed {channel} release manifest."),
-        "Download verified macOS flake and lock artifacts into the local release cache.".to_owned(),
+        format!(
+            "Download release {} from {}.",
+            args.version,
+            release::configuration_url(&args.version).expect("validated release version")
+        ),
+        "Preview: trust GitHub/HTTPS; no signatures or hash checks are performed.".to_owned(),
     ];
+
+    if args.download_only {
+        lines.push(format!(
+            "Download {} if Nix is absent; retain download files only.",
+            release::NIX_INSTALLER_URL
+        ));
+        lines.push("Stop WITHOUT installing Nix, activating configuration, collecting identity, or writing installation state.".to_owned());
+        return Plan {
+            title: "Builder Kit download plan",
+            platform: HostPlatform::Macos,
+            lines,
+            confirmation: if confirmed {
+                Confirmation::NotRequired
+            } else {
+                Confirmation::Standard
+            },
+        };
+    }
 
     match inspection.nix_state {
         NixState::Absent => {
             lines.push(
-                "Download, verify, retain, and run the pinned upstream Nix installer.".to_owned(),
+                format!("Download and run upstream Nix installer {} from {}; administrator authentication may be required.", release::NIX_INSTALLER_VERSION, release::NIX_INSTALLER_URL),
             );
         }
         NixState::Present => {
@@ -1154,7 +1092,11 @@ fn macos_setup_plan(inspection: &MacosSetupInspection, channel: Channel, confirm
     lines.extend([
         "Collect student Git identity and tool preferences without storing secrets.".to_owned(),
         "Write those values only into the marked Builder Kit user settings block.".to_owned(),
-        "Validate and activate nix-darwin/Home Manager for the current macOS user.".to_owned(),
+        if args.no_activate {
+            "Validate configuration WITHOUT activation or marking installation complete.".to_owned()
+        } else {
+            "Validate and activate nix-darwin/Home Manager for the current macOS user; administrator authentication may be required.".to_owned()
+        },
     ]);
 
     if confirmed {
@@ -1175,21 +1117,20 @@ fn macos_setup_plan(inspection: &MacosSetupInspection, channel: Channel, confirm
     }
 }
 
-fn setup_plan(platform: HostPlatform, channel: Channel, confirmed: bool) -> Plan {
+fn setup_plan(platform: HostPlatform, version: &str, confirmed: bool) -> Plan {
     let mut lines = match platform {
         HostPlatform::Windows => vec![
             "Detect WSL 2 prerequisites and existing Builder Kit state.".to_owned(),
-            format!("Fetch and verify the signed {channel} release manifest."),
-            "Download and verify the Builder Kit WSL image.".to_owned(),
+            format!("Use explicitly requested release {version}."),
+            "Windows setup execution is not implemented yet.".to_owned(),
             "Install the image as the Builder Kit WSL distribution.".to_owned(),
             "Configure the Linux user declaratively through the WSL agent.".to_owned(),
         ],
         HostPlatform::Macos => vec![
             "Detect the current macOS account and existing Nix state.".to_owned(),
-            format!("Fetch and verify the signed {channel} release manifest."),
+            format!("Download explicitly requested release {version} from GitHub over HTTPS."),
             "Install upstream Nix only if no supported Nix installation exists.".to_owned(),
-            "Create ~/.kit/nix/flake.nix and flake.lock from verified release artifacts."
-                .to_owned(),
+            "Create ~/.kit/nix/flake.nix and flake.lock from the requested release.".to_owned(),
             "Activate nix-darwin and Home Manager for the current macOS user.".to_owned(),
         ],
         HostPlatform::Unsupported => vec![
@@ -1216,11 +1157,11 @@ fn setup_plan(platform: HostPlatform, channel: Channel, confirmed: bool) -> Plan
     }
 }
 
-fn update_plan(platform: HostPlatform, check_only: bool, confirmed: bool) -> Plan {
+fn update_plan(platform: HostPlatform, version: &str, check_only: bool, confirmed: bool) -> Plan {
     let mut lines = vec![
         "Read local non-secret Builder Kit installation state.".to_owned(),
-        "Fetch and verify the signed release manifest for the installed channel.".to_owned(),
-        "Report whether a dependency or feature update is available.".to_owned(),
+        format!("Use explicitly requested release {version}; no latest resolution."),
+        "Report whether the requested release is available.".to_owned(),
     ];
 
     if !check_only {
@@ -1294,22 +1235,124 @@ mod tests {
     use super::*;
 
     #[test]
+    fn download_only_cli_conflicts_with_mutating_modes() {
+        for flag in ["--dry-run", "--no-activate"] {
+            assert!(
+                Cli::try_parse_from([
+                    "kit",
+                    "setup",
+                    "--version",
+                    "2026.09.0",
+                    "--download-only",
+                    flag
+                ])
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn setup_and_update_require_an_explicit_version() {
+        for command in ["setup", "update"] {
+            assert!(Cli::try_parse_from(["kit", command]).is_err());
+            assert!(Cli::try_parse_from(["kit", command, "--version", "latest"]).is_err());
+            assert!(Cli::try_parse_from(["kit", command, "--version", "2026.09.0"]).is_ok());
+            for removed in [
+                "--channel",
+                "--manifest-url",
+                "--release-index",
+                "--artifact",
+                "--payload-dir",
+                "--nix-installer",
+            ] {
+                assert!(
+                    Cli::try_parse_from([
+                        "kit",
+                        command,
+                        "--version",
+                        "2026.09.0",
+                        removed,
+                        "value"
+                    ])
+                    .is_err()
+                );
+            }
+        }
+        assert!(
+            Cli::try_parse_from(["kit", "--version"])
+                .unwrap_err()
+                .kind()
+                == clap::error::ErrorKind::DisplayVersion
+        );
+    }
+
+    #[test]
+    fn download_plan_does_not_claim_it_will_install_or_activate() {
+        let args =
+            Cli::try_parse_from(["kit", "setup", "--version", "2026.09.0", "--download-only"])
+                .unwrap();
+        let Command::Setup(args) = args.command else {
+            panic!("expected setup")
+        };
+        let inspection = MacosSetupInspection {
+            executable_dir: "/tmp/downloads".into(),
+            kit_root: "/tmp/home/.kit".into(),
+            installer_dir: "/tmp/home/.kit/installer".into(),
+            config_dir: "/tmp/home/.kit/nix".into(),
+            local_bin: "/tmp/home/.local/bin".into(),
+            nix_state: NixState::Absent,
+            config_state: ConfigState::Absent,
+            current_user: "tester".into(),
+            home_dir: "/tmp/home".into(),
+        };
+        let plan = macos_setup_plan(&inspection, &args).render();
+        assert!(plan.contains("download plan"));
+        assert!(plan.contains("Stop WITHOUT installing Nix"));
+        assert!(!plan.contains("Install the kit command"));
+        assert!(!plan.contains("Validate and activate"));
+    }
+
+    #[test]
+    fn only_native_arm_macos_is_qualified() {
+        assert!(ensure_macos_architecture("aarch64").is_ok());
+        assert!(ensure_macos_architecture("x86_64").is_err());
+    }
+
+    #[test]
+    fn malformed_settings_markers_are_errors_not_panics() {
+        let reversed = "# END BUILDER-KIT USER SETTINGS\n# BEGIN BUILDER-KIT USER SETTINGS";
+        let duplicate = "# BEGIN BUILDER-KIT USER SETTINGS\n# BEGIN BUILDER-KIT USER SETTINGS\n# END BUILDER-KIT USER SETTINGS";
+        for flake in [reversed, duplicate] {
+            assert!(replace_user_settings_block(flake, "replacement").is_err());
+            assert!(extract_user_settings_block(flake).is_err());
+        }
+    }
+
+    #[test]
+    fn user_values_cannot_interpolate_nix_code() {
+        assert_eq!(
+            escape_nix_string("${builtins.abort \"bad\"}"),
+            "\\${builtins.abort \\\"bad\\\"}"
+        );
+    }
+
+    #[test]
     fn setup_plan_mentions_macos_nix_darwin() {
-        let rendered = setup_plan(HostPlatform::Macos, Channel::Stable, false).render();
+        let rendered = setup_plan(HostPlatform::Macos, "2026.09.0", false).render();
         assert!(rendered.contains("nix-darwin"));
         assert!(rendered.contains("Proceed? [y/N]"));
     }
 
     #[test]
     fn setup_dry_run_plan_needs_no_confirmation() {
-        let rendered = setup_plan(HostPlatform::Windows, Channel::Edge, true).render();
-        assert!(rendered.contains("edge"));
+        let rendered = setup_plan(HostPlatform::Windows, "2026.09.0", true).render();
+        assert!(rendered.contains("2026.09.0"));
         assert!(!rendered.contains("Proceed? [y/N]"));
     }
 
     #[test]
     fn update_check_plan_does_not_activate() {
-        let rendered = update_plan(HostPlatform::Macos, true, true).render();
+        let rendered = update_plan(HostPlatform::Macos, "2026.09.0", true, true).render();
         assert!(rendered.contains("Report whether"));
         assert!(!rendered.contains("Apply the update"));
     }

@@ -1,5 +1,10 @@
 # Builder Kit Host CLI Specification
 
+> Preview override: [MACOS_PREVIEW.md](MACOS_PREVIEW.md) defines the current
+> explicit-version download workflow. Signing, hashes, manifests, channels, and
+> latest-release resolution described below are not implemented in the preview;
+> the remainder is a longer-term design, not its release contract.
+
 ## 1. Purpose
 
 `kit` is a small, native Rust command-line application that installs, configures, updates, and deliberately detaches Builder Kit environments. It is the only artifact a student downloads directly.

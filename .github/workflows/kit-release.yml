@@ -1,0 +1,68 @@
+name: kit release
+
+on:
+  push:
+    tags:
+      - "kit/*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kit-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-macos:
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Check tag matches kit SemVer
+        run: |
+          package="$(nix develop -c cargo pkgid -p kit)"
+          version="${package##*#}"
+          version="${version##*@}"
+          if [[ "$GITHUB_REF_NAME" != "kit/$version" ]]; then
+            echo "Tag must match kit's Cargo.toml version: kit/$version" >&2
+            exit 1
+          fi
+
+      - name: Test
+        run: nix develop -c just test
+
+      - name: Build portable binary with zigbuild
+        run: nix develop -c just build-kit-macos-aarch64
+
+      - name: Package and smoke-test binary
+        run: |
+          mkdir -p dist
+          cp target/macos-dist/aarch64-apple-darwin/release/kit dist/kit-darwin-aarch64
+          dist/kit-darwin-aarch64 --version
+          dist/kit-darwin-aarch64 --help
+
+      - name: Publish binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#kit/}"
+          prerelease=()
+          if [[ "${version%%+*}" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --generate-notes "${prerelease[@]}" \
+            --title "kit $version" \
+            dist/kit-darwin-aarch64

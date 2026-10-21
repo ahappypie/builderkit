@@ -25,7 +25,11 @@ Save your work before starting. Windows may need to restart when enabling WSL.
 
 ## 1. Download kit
 
-Download the executable for your operating system and architecture from the [latest release](https://github.com/ahappypie/builderkit/releases/latest).
+Download the executable for your operating system and architecture from a `kit` release on [GitHub Releases](https://github.com/ahappypie/builderkit/releases). CLI releases use SemVer tags such as `kit/0.0.2`. Configuration bundles use CalVer tags such as `bundle/2026.09.0`. Pass only the CalVer value to setup and update: the setup examples below use `--version 2026.09.0`.
+
+:::caution[Preview downloads]
+This preview trusts GitHub and HTTPS. It does not check release signatures or hashes. Use a test machine or VM while evaluating it.
+:::
 
 <Tabs>
   <TabItem label="macOS">
@@ -56,12 +60,12 @@ Preview what <Kit /> will do without making changes:
 <Tabs>
   <TabItem label="macOS">
     ```sh
-    ./kit setup --dry-run
+    ./kit setup --version 2026.09.0 --dry-run
     ```
   </TabItem>
   <TabItem label="Windows">
     ```powershell
-    .\kit.exe setup --dry-run
+    .\kit.exe setup --version 2026.09.0 --dry-run
     ```
   </TabItem>
 </Tabs>
@@ -77,19 +81,19 @@ When you are ready, run setup without `--dry-run`:
 <Tabs>
   <TabItem label="macOS">
     ```sh
-    ./kit setup
+    ./kit setup --version 2026.09.0
     ```
   </TabItem>
   <TabItem label="Windows">
     ```powershell
-    .\kit.exe setup
+    .\kit.exe setup --version 2026.09.0
     ```
   </TabItem>
 </Tabs>
 
 Review the plan and confirm that you want to proceed. Follow the prompts to enter your name, Git email, and preferences. On Windows, you will also choose a Linux username for your development environment; on macOS, <Kit /> uses your existing account.
 
-<Kit /> downloads the required files, verifies them, and installs your tools. You may be asked to approve system changes or confirm the Nix installation separately.
+<Kit /> downloads the requested release and installs your tools. You may be asked to approve system changes or confirm the Nix installation separately.
 
 :::tip[Asked to restart Windows?]
 Restart your PC, open PowerShell, and run the same setup command again. <Kit /> will check the prerequisites and continue setup.
@@ -128,16 +132,16 @@ If you use GitHub or coding agents, follow each tool's sign-in instructions befo
 
 Run management commands from Terminal on macOS or PowerShell on Windows. On Windows, use `kit.exe` rather than running the command inside WSL.
 
-Check whether an update is available:
+Choose a newer version from [GitHub Releases](https://github.com/ahappypie/builderkit/releases). There is no automatic “latest” selection. For example, if a `2026.10.0` release has been published, check it with:
 
 ```sh
-kit update --check
+kit update --version 2026.10.0 --check
 ```
 
-To install an update:
+To install that release:
 
 ```sh
-kit update
+kit update --version 2026.10.0
 ```
 
 <Kit /> shows the proposed changes and asks for confirmation before applying them. Updates can change package versions and behavior, so review the plan before proceeding.
@@ -152,7 +156,7 @@ If setup stops, read the reported reason before retrying. <Kit /> will not overw
 
 - **Command not found:** open a new terminal, or run the executable directly from the folder where you downloaded it.
 - **Restart required:** restart Windows and rerun setup.
-- **Already managed:** use `kit update` instead of running setup again.
+- **Already managed:** use `kit update --version <release>` instead of running setup again.
 - **Conflicting configuration or failed installation:** preserve your existing files and the error output. Do not delete configuration directories just to bypass a check.
 
 Ask for help in [GitHub Discussions](https://github.com/ahappypie/builderkit/discussions). Include your operating system, the command you ran, and the relevant error message. Remove personal information and secrets before posting.

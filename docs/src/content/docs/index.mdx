@@ -21,21 +21,21 @@ hero:
 ---
 
 ```bash
-> kit setup
+> kit setup --version 2026.09.0
 Builder Kit setup plan
 ────────────────────────────────────────
 Platform: macOS
 This command will:
   1. Use executable directory /Users/easton/.local/bin.
   2. Use Builder Kit directory /Users/easton/.kit.
-  3. Use installer and manifest cache directory /Users/easton/.kit/installer.
+  3. Use installer directory /Users/easton/.kit/installer.
   4. Install the kit command to /Users/easton/.local/bin.
   5. Inspect current macOS user easton with home directory /Users/easton.
   6. Inspect Builder Kit Nix configuration at /Users/easton/.kit/nix.
   7. Detected Nix state: present and responding.
   8. Detected configuration state: managed Builder Kit configuration.
-  9. Fetch and verify the signed stable release manifest.
-  10. Download verified macOS flake and lock artifacts into the local release cache.
+  9. Download release 2026.09.0 from GitHub over HTTPS.
+  10. Preview: trust GitHub/HTTPS; no signatures or hash checks are performed.
   11. Reuse the existing responding Nix installation without reinstalling it.
   12. Stop setup because this machine already appears managed by Builder Kit.
   13. Collect student Git identity and tool preferences without storing secrets.

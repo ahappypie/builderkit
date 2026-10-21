@@ -3,22 +3,24 @@ name: Darwin release artifact
 on:
   push:
     tags:
-      - "*.*.*"
+      - "bundle/[0-9][0-9][0-9][0-9].[0-9][0-9].*"
 
 permissions:
   contents: write
 
 jobs:
   release-darwin-flake:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04-arm
     steps:
       - name: verify calver
+        id: version
         run: |
-          tag="${GITHUB_REF_NAME}"
-          if ! printf '%s' "$tag" | grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]+$'; then
-          echo "Tag must use CalVer: YYYY.MM.PATCH" >&2
-          exit 1
+          version="${GITHUB_REF_NAME#bundle/}"
+          if ! [[ "$version" =~ ^[0-9]{4}\.(0[1-9]|1[0-2])\.[0-9]+$ ]]; then
+            echo "Tag must use bundle/YYYY.MM.PATCH" >&2
+            exit 1
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,16 +40,19 @@ jobs:
         run: nix flake check "path:$PWD/dist/darwin"
 
       - name: package artifact
+        env:
+          BUNDLE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          tar -C dist/darwin -czf "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz" flake.nix flake.lock
-          sha256sum "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz" > "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz.sha256"
+          tar -C dist/darwin -czf "builderkit-darwin-${BUNDLE_VERSION}.tar.gz" flake.nix flake.lock
+          sha256sum "builderkit-darwin-${BUNDLE_VERSION}.tar.gz" > "builderkit-darwin-${BUNDLE_VERSION}.tar.gz.sha256"
 
       - name: Publish release artifact
         env:
           GH_TOKEN: ${{ github.token }}
+          BUNDLE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            --title "Builder Kit $GITHUB_REF_NAME" \
-            --notes "Builder Kit Darwin flake artifact for $GITHUB_REF_NAME." \
-            "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz" \
-            "builderkit-darwin-${GITHUB_REF_NAME}.tar.gz.sha256"
+            --title "Builder Kit $BUNDLE_VERSION" \
+            --notes "Builder Kit Darwin flake artifact for $BUNDLE_VERSION." \
+            "builderkit-darwin-${BUNDLE_VERSION}.tar.gz" \
+            "builderkit-darwin-${BUNDLE_VERSION}.tar.gz.sha256"

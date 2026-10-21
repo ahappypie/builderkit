@@ -1,5 +1,9 @@
 # Builder Kit macOS Setup Specification
 
+> Preview override: see [MACOS_PREVIEW.md](MACOS_PREVIEW.md). The current preview
+> requires an explicit release version, downloads over HTTPS without signatures
+> or hash checks, and uses `~/.kit/nix/`. The remainder is a longer-term design.
+
 ## 1. Purpose
 
 This specification defines the macOS implementation of `kit setup`, `kit update`, and `kit eject`.
