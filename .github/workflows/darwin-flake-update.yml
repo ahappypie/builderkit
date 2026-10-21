@@ -26,7 +26,7 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: assemble current darwin artifact
-        run: nix develop -c just assemble darwin dist/darwin
+        run: nix develop -c just assemble darwin
 
       - name: snapshot current darwin
         run: scripts/darwin-package-snapshot.sh dist/darwin darwin-update-snapshots/old
