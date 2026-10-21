@@ -46,12 +46,17 @@ jobs:
       - name: Build portable binary with zigbuild
         run: nix develop -c just build-kit-macos-aarch64
 
-      - name: Package and smoke-test binary
+      - name: Package and inspect macOS binary
         run: |
           mkdir -p dist
           cp target/macos-dist/aarch64-apple-darwin/release/kit dist/kit-darwin-aarch64
-          dist/kit-darwin-aarch64 --version
-          dist/kit-darwin-aarch64 --help
+          # This is a Linux runner: inspect the cross-built binary, do not execute it.
+          description="$(file --brief dist/kit-darwin-aarch64)"
+          printf '%s\n' "$description"
+          if [[ "$description" != "Mach-O 64-bit arm64 executable"* ]]; then
+            echo "Expected an ARM64 macOS executable" >&2
+            exit 1
+          fi
 
       - name: Publish binary
         env:

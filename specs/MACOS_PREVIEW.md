@@ -13,7 +13,7 @@ and platform specifications for this preview only.
 The CLI and configuration bundle have independent release lifecycles:
 
 - `.github/workflows/kit-release.yml`: `kit/MAJOR.MINOR.PATCH` tags build and
-  publish only `kit-darwin-arm64`. The SemVer suffix must match the version in
+  publish only `kit-darwin-aarch64`. The SemVer suffix must match the version in
   `rust/kit/Cargo.toml`. Tags such as `kit/0.0.3-preview.1` create GitHub
   prereleases.
 - `.github/workflows/darwin-release.yml`: `bundle/YYYY.MM.PATCH` tags assemble, check,
@@ -32,9 +32,11 @@ just build-kit-macos-aarch64
 ```
 
 The output is `target/macos-dist/aarch64-apple-darwin/release/kit`. The recipe
-uses zigbuild and rejects Nix library references. CI runs the workspace tests,
-copies the binary to `dist/kit-darwin-arm64`, smoke-tests it, and publishes it
-under the SemVer tag. It does not assemble or publish a flake bundle.
+uses zigbuild. CI runs the workspace tests natively on Linux, copies the
+cross-built binary to `dist/kit-darwin-aarch64`, checks that it is an ARM64
+Mach-O executable without executing it, and publishes it under the SemVer tag.
+Runtime testing belongs in the macOS VM. CI does not assemble or publish a
+flake bundle.
 
 There are no signing, 1Password, manifest, or binary checksum steps. The
 `--version` argument to setup/update selects a **CalVer configuration release**,
