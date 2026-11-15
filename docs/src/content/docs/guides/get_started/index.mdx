@@ -1,0 +1,22 @@
+---
+title: Getting started
+description: Choose your operating system to get started with Builder Kit.
+---
+
+import { CardGrid } from "@astrojs/starlight/components";
+import PlatformCard from "@/components/PlatformCard.astro";
+
+<CardGrid>
+  <PlatformCard
+    title="macOS"
+    icon="apple"
+    href="/guides/get_started/macos/"
+    description="Get started on macOS"
+  />
+  <PlatformCard
+    title="Windows"
+    icon="seti:windows"
+    href="/guides/get_started/windows/"
+    description="Coming soon"
+  />
+</CardGrid>

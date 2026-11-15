@@ -1,0 +1,71 @@
+---
+import { Icon } from "@astrojs/starlight/components";
+import type { ComponentProps } from "astro/types";
+
+interface Props {
+  title: string;
+  description: string;
+  href: string;
+  icon: ComponentProps<typeof Icon>["name"];
+}
+
+const { title, description, href, icon } = Astro.props;
+---
+
+<a class="platform-card" href={href}>
+  <span class="title">
+    <Icon name={icon} size="1.5em" />
+    <span>{title}</span>
+  </span>
+  <span class="description">{description}</span>
+</a>
+
+<style>
+  .platform-card {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 2rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    background: var(--sl-color-black);
+    color: var(--sl-color-white);
+    text-decoration: none;
+    transition: border-color 150ms ease, background-color 150ms ease,
+      box-shadow 150ms ease, transform 150ms ease;
+  }
+
+  .title {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-size: var(--sl-text-h4);
+    font-weight: 600;
+  }
+
+  .description {
+    color: var(--sl-color-gray-3);
+  }
+
+  .platform-card:hover,
+  .platform-card:focus-visible {
+    border-color: var(--sl-color-text-accent);
+    background: var(--sl-color-gray-6);
+    box-shadow: var(--sl-shadow-md);
+    transform: translateY(-2px);
+  }
+
+  .platform-card:focus-visible {
+    outline: 2px solid var(--sl-color-text-accent);
+    outline-offset: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .platform-card,
+    .platform-card:hover,
+    .platform-card:focus-visible {
+      transition: none;
+      transform: none;
+    }
+  }
+</style>

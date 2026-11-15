@@ -1,0 +1,114 @@
+---
+title: Getting started on macOS
+description: Install Builder Kit and set up your development environment on macOS.
+---
+
+import Kit from "@/components/Kit.astro";
+
+Set up your development environment with <Kit />. Download the command, review the setup plan, and let <Kit /> install and configure your tools. You do not need to learn Nix or write any configuration to get started.
+
+## Before you begin
+
+You will need:
+
+- An Apple Silicon Mac running macOS 13 or later.
+- Administrator access for system changes.
+- An internet connection to download your tools.
+- Your name and the email address you want to use for Git commits.
+
+Save your work before starting.
+
+:::note[Already using Nix?]
+<Kit /> is designed to set up a managed development environment, not migrate an existing one. If it detects an unsupported Nix installation or conflicting configuration, it will stop rather than overwrite it.
+:::
+
+## 1. Download kit
+
+Download `kit-darwin-aarch64` from a `kit` release on [GitHub Releases](https://github.com/ahappypie/builderkit/releases). CLI releases use SemVer tags such as `kit/0.0.3`. Configuration bundles use CalVer tags such as `bundle/2026.09.0`. Pass only the CalVer value to setup and update: the setup examples below use `--version 2026.09.0`.
+
+:::caution[Preview downloads]
+This preview trusts GitHub and HTTPS. It does not check release signatures or hashes. Use a test machine or VM while evaluating it.
+:::
+
+Open Terminal. If you saved the executable in Downloads, rename it to `kit` and run:
+
+```sh
+cd ~/Downloads
+mv kit-darwin-aarch64 kit
+chmod +x ./kit
+./kit --version
+```
+
+## 2. Review the setup plan
+
+Preview what <Kit /> will do without making changes:
+
+```sh
+./kit setup --version 2026.09.0 --dry-run
+```
+
+The plan is specific to your machine. It explains what will be installed, where your configuration will live, and whether administrator approval is needed.
+
+<Kit /> configures your existing macOS account using Nix, nix-darwin, and Home Manager.
+
+## 3. Run setup
+
+When you are ready, run setup without `--dry-run`:
+
+```sh
+./kit setup --version 2026.09.0
+```
+
+Review the plan and confirm that you want to proceed. Follow the prompts to enter your name and Git email. <Kit /> uses your existing macOS account.
+
+<Kit /> downloads the requested release and installs your tools. You may be asked to approve system changes or confirm the Nix installation separately.
+
+:::caution[Keep secrets out of your configuration]
+Your Git email is used for commit attribution, not authentication. Do not enter passwords, API keys, or access tokens as setup preferences. Sign in to individual tools using their own login flows after setup.
+:::
+
+## 4. Open your development environment
+
+Once setup reports success, open a new Terminal window so your shell picks up the installed tools and configuration.
+
+Check your Git identity:
+
+```sh
+git --version
+git config --get user.name
+git config --get user.email
+```
+
+Your name and email should match the values you entered during setup. You are ready to start a project!
+
+If you use GitHub or coding agents, follow each tool's sign-in instructions before using features that require an account. <Kit /> installs tools, but does not supply subscriptions or credentials.
+
+## Keep your tools up to date
+
+Choose a newer configuration bundle from [GitHub Releases](https://github.com/ahappypie/builderkit/releases). There is no automatic “latest” selection. For example, if `bundle/2026.10.0` has been published, check it with:
+
+```sh
+kit update --version 2026.10.0 --check
+```
+
+To install that release:
+
+```sh
+kit update --version 2026.10.0
+```
+
+<Kit /> shows the proposed changes and asks for confirmation before applying them. Updates can change package versions and behavior, so review the plan before proceeding.
+
+:::note[Running from your download folder]
+If `kit` is not on your command path, use the executable directly: `./kit` from the folder where you downloaded it.
+:::
+
+## Need help?
+
+If setup stops, read the reported reason before retrying. <Kit /> will not overwrite an unrelated configuration or automatically repair an unhealthy Nix installation.
+
+- **Command not found:** open a new terminal, or run the executable directly from the folder where you downloaded it.
+- **Already managed:** use `kit update --version <release>` instead of running setup again.
+- **Conflicting configuration or failed installation:** preserve your existing files and the error output. Do not delete configuration directories just to bypass a check.
+
+Ask for help in [GitHub Discussions](https://github.com/ahappypie/builderkit/discussions). Include your operating system, the command you ran, and the relevant error message. Remove personal information and secrets before posting.

@@ -12,7 +12,14 @@ export default defineConfig({
 				{
 					label: 'Guides',
 					items: [
-						{ label: 'Getting started', slug: 'guides/get_started' },
+						{
+							label: 'Getting started',
+							items: [
+								{ label: 'Overview', slug: 'guides/get_started' },
+								{ label: 'macOS', slug: 'guides/get_started/macos' },
+								{ label: 'Windows', slug: 'guides/get_started/windows' },
+							],
+						},
 					],
 				},
 				{
