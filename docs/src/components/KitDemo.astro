@@ -1,0 +1,95 @@
+---
+const base = import.meta.env.BASE_URL;
+---
+
+<div data-kit-demo>
+  <video
+    hidden
+    controls
+    autoplay
+    muted
+    playsinline
+    preload="auto"
+    aria-label="Builder Kit setup demonstration"
+    data-mp4={`${base}kit-demo.mp4`}
+    data-webm={`${base}kit-demo.webm`}
+  ></video>
+  <img
+    hidden
+    data-gif={`${base}kit-demo.gif`}
+    alt="Animated demonstration of Builder Kit setup in a terminal"
+  />
+  <div data-demo-transcript><slot /></div>
+</div>
+
+<script>
+  function initializeDemos() {
+    document.querySelectorAll<HTMLElement>('[data-kit-demo]').forEach((demo) => {
+      if (demo.dataset.initialized) return;
+      demo.dataset.initialized = 'true';
+
+      const video = demo.querySelector('video')!;
+      const gif = demo.querySelector('img')!;
+      const transcript = demo.querySelector<HTMLElement>('[data-demo-transcript]')!;
+
+      // Keep the static transcript for reduced-motion preferences and no JS.
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+      const sources = [video.dataset.mp4!, video.dataset.webm!];
+      let sourceIndex = 0;
+      let usingGif = false;
+
+      const showGif = () => {
+        usingGif = true;
+        video.hidden = true;
+        gif.addEventListener('load', () => {
+          gif.hidden = false;
+          transcript.hidden = true;
+        }, { once: true });
+        gif.addEventListener('error', () => {
+          gif.hidden = true;
+          transcript.hidden = false;
+        }, { once: true });
+        gif.src = gif.dataset.gif!;
+      };
+
+      video.addEventListener('loadeddata', () => {
+        if (usingGif) return;
+        video.hidden = false;
+        transcript.hidden = true;
+      });
+      video.addEventListener('error', () => {
+        sourceIndex += 1;
+        if (sourceIndex < sources.length) {
+          video.src = sources[sourceIndex];
+          video.load();
+        } else {
+          showGif();
+        }
+      });
+
+      if (typeof video.canPlayType !== 'function') {
+        showGif();
+        return;
+      }
+      video.src = sources[sourceIndex];
+      video.load();
+    });
+  }
+
+  initializeDemos();
+  document.addEventListener('astro:page-load', initializeDemos);
+</script>
+
+<style>
+  video,
+  img {
+    width: 100%;
+    height: auto;
+    border-radius: 0.5rem;
+  }
+
+  [hidden] {
+    display: none !important;
+  }
+</style>

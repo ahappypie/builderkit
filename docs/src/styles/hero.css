@@ -1,5 +1,12 @@
 .hero {
     grid-template-columns: 1fr;
+    padding-bottom: 0;
+}
+
+/* Keep the demo close to the hero actions, rather than Starlight's large
+   desktop hero padding plus the following content panel's padding. */
+.content-panel:has(.hero) + .content-panel:has([data-kit-demo]) {
+    padding-top: 0;
 }
 
 .hero .copy {
