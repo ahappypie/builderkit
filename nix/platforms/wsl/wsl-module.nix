@@ -36,7 +36,7 @@
   home-manager.useUserPackages = true;
   home-manager.backupFileExtension = "builderkit-backup";
   home-manager.extraSpecialArgs = {
-    inherit builderKit inputs;
+    inherit builderKit inputs agentSkills;
   };
 
   home-manager.users.${builderKit.user.username} = {

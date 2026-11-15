@@ -9,6 +9,7 @@ use askama::Template;
 use clap::{Parser, Subcommand};
 
 const HOME_MANAGER_FRAGMENTS_DIR: &str = "nix/home-manager";
+const AGENT_SKILLS_PATH: &str = "nix/agent-skills/default.nix";
 
 const DARWIN_FLAKE_INPUTS: &str = include_str!("../../../nix/platforms/darwin/flake-inputs.nix");
 const DARWIN_CONFIGURATION: &str =
@@ -33,6 +34,7 @@ const PROGRAMS_ZSH_PLACEHOLDER: &str = "      # PROGRAMS ZSH BODY IS EMBEDDED HE
 #[derive(Template)]
 #[template(path = "darwin-flake.nix", escape = "none")]
 struct DarwinFlakeTemplate {
+    agent_skills: String,
     flake_inputs: String,
     darwin_configuration: String,
 }
@@ -40,6 +42,7 @@ struct DarwinFlakeTemplate {
 #[derive(Template)]
 #[template(path = "wsl-flake.nix", escape = "none")]
 struct WslFlakeTemplate {
+    agent_skills: String,
     flake_inputs: String,
     wsl_configuration: String,
 }
@@ -122,6 +125,7 @@ fn render_darwin_flake() -> Result<String, Box<dyn Error>> {
     );
 
     DarwinFlakeTemplate {
+        agent_skills: indent(fs::read_to_string(AGENT_SKILLS_PATH)?.trim_end(), 8),
         flake_inputs: indent(DARWIN_FLAKE_INPUTS.trim_end(), 4),
         darwin_configuration: indent(&darwin_configuration, 8),
     }
@@ -146,6 +150,7 @@ fn render_wsl_flake() -> Result<String, Box<dyn Error>> {
     );
 
     WslFlakeTemplate {
+        agent_skills: indent(fs::read_to_string(AGENT_SKILLS_PATH)?.trim_end(), 8),
         flake_inputs: indent(WSL_FLAKE_INPUTS.trim_end(), 4),
         wsl_configuration: indent(&wsl_configuration, 8),
     }

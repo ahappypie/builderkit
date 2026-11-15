@@ -23,6 +23,11 @@
       };
       # END BUILDER-KIT USER SETTINGS
 
+      # Shared skill content, embedded so no external source files are needed.
+      agentSkills =
+{{ agent_skills }}
+      ;
+
       supportedSystems = [
         "aarch64-darwin"
       ];
