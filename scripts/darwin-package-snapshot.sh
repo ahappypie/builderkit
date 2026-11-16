@@ -81,3 +81,22 @@ lock_input_refs "$FLAKE_DIR/flake.lock" > "$OUTPUT_DIR/flake-inputs.txt"
 package_names "$FLAKE_DIR" environment.systemPackages > "$OUTPUT_DIR/darwin-system-packages.txt"
 home_manager_package_names "$FLAKE_DIR" > "$OUTPUT_DIR/home-manager-packages.txt"
 flake_defined_package_names "$FLAKE_DIR" > "$OUTPUT_DIR/flake-defined-packages.txt"
+
+# Keep structured metadata for the docs alongside the versioned names used by
+# the update report. This evaluates packages; it does not build their outputs.
+nix eval --json "$(flake_ref "$FLAKE_DIR")#darwinConfigurations.$SYSTEM.config" \
+  --apply '
+    config:
+    let
+      user = builtins.head (builtins.attrNames config.home-manager.users);
+      metadata = packages: map (package: {
+        name = package.pname or (builtins.parseDrvName package.name).name;
+        command = package.meta.mainProgram or null;
+        description = package.meta.description or "";
+        homepage = package.meta.homepage or null;
+      }) packages;
+    in {
+      home = metadata config.home-manager.users.${user}.home.packages;
+      system = metadata config.environment.systemPackages;
+    }
+  ' > "$OUTPUT_DIR/package-metadata.json"

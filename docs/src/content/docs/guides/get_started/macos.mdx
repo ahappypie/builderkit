@@ -24,13 +24,9 @@ Save your work before starting.
 
 ## 1. Download kit
 
-Download `kit-darwin-aarch64` from a `kit` release on [GitHub Releases](https://github.com/ahappypie/builderkit/releases). CLI releases use SemVer tags such as `kit/0.0.3`. Configuration bundles use CalVer tags such as `bundle/2026.09.0`. Pass only the CalVer value to setup and update: the setup examples below use `--version 2026.09.0`.
+Download `kit-darwin-aarch64` from a `kit` release on [GitHub Releases](https://github.com/ahappypie/builderkit/releases). <Kit /> releases use Semantic Versioning tags such as `kit/0.0.3`.
 
-:::caution[Preview downloads]
-This preview trusts GitHub and HTTPS. It does not check release signatures or hashes. Use a test machine or VM while evaluating it.
-:::
-
-Open Terminal. If you saved the executable in Downloads, rename it to `kit` and run:
+Open Terminal.app. If you saved the executable in Downloads, rename it to `kit` and run:
 
 ```sh
 cd ~/Downloads
@@ -40,6 +36,8 @@ chmod +x ./kit
 ```
 
 ## 2. Review the setup plan
+
+Configuration bundles use Calendar Versioning tags such like `bundle/2026.09.0`. Pass only the CalVer value to `kit setup` and `kit update`: the setup examples below use `--version 2026.09.0`.
 
 Preview what <Kit /> will do without making changes:
 
@@ -64,12 +62,12 @@ Review the plan and confirm that you want to proceed. Follow the prompts to ente
 <Kit /> downloads the requested release and installs your tools. You may be asked to approve system changes or confirm the Nix installation separately.
 
 :::caution[Keep secrets out of your configuration]
-Your Git email is used for commit attribution, not authentication. Do not enter passwords, API keys, or access tokens as setup preferences. Sign in to individual tools using their own login flows after setup.
+Your Git email is used for commit attribution, not authentication. Do not enter passwords, API keys, or access tokens as setup preferences. Sign in to individual tools using their own login flows after setup completes.
 :::
 
 ## 4. Open your development environment
 
-Once setup reports success, open a new Terminal window so your shell picks up the installed tools and configuration.
+Once setup reports success, restart Terminal.app or open a new Terminal window so your shell picks up the installed tools and configuration.
 
 Check your Git identity:
 
@@ -85,7 +83,7 @@ If you use GitHub or coding agents, follow each tool's sign-in instructions befo
 
 ## Keep your tools up to date
 
-Choose a newer configuration bundle from [GitHub Releases](https://github.com/ahappypie/builderkit/releases). There is no automatic “latest” selection. For example, if `bundle/2026.10.0` has been published, check it with:
+Choose a newer configuration bundle from [GitHub Releases](https://github.com/ahappypie/builderkit/releases). There is no automatic "latest" selection. For example, if `bundle/2026.10.0` has been published, check it with:
 
 ```sh
 kit update --version 2026.10.0 --check

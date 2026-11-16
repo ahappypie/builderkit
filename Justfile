@@ -20,6 +20,11 @@ build:
 assemble platform="darwin":
     cargo run -p kit-assembler -- {{ platform }} --out dist/{{ platform }}
 
+# Refresh the installed-tools reference from the evaluated macOS bundle.
+docs-tools: (assemble "darwin")
+    scripts/darwin-package-snapshot.sh dist/darwin dist/docs-tools
+    scripts/darwin-tools-reference.sh dist/docs-tools docs/src/content/docs/reference/installed_tools.md
+
 # Build the Windows host CLI for an MSVC target using cargo-xwin.
 xwin-kit target:
     cargo xwin build -p kit --release --target {{ target }}

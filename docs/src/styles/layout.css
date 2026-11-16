@@ -1,0 +1,17 @@
+:root {
+    --sl-content-width: 60rem;
+    /* 75% of Starlight's default 1rem horizontal content padding. */
+    --sl-content-pad-x: 0.75rem;
+}
+
+.content-panel {
+    /* 75% of the default 1.5rem vertical content padding. */
+    padding-block: 1.125rem;
+}
+
+@media (min-width: 72rem) {
+    :root {
+        /* 75% of Starlight's desktop 1.5rem horizontal padding. */
+        --sl-content-pad-x: 1.125rem;
+    }
+}

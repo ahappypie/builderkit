@@ -8,6 +8,27 @@ pnpm create astro@latest -- --template starlight
 
 > 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
 
+## Refresh the installed-tools reference
+
+From the repository root, run `nix develop -c just docs-tools`. This assembles
+and evaluates the macOS bundle, then regenerates
+`docs/src/content/docs/reference/installed_tools.md` without building the tools.
+
+The generator reuses `scripts/darwin-package-snapshot.sh`, which exports
+`package-metadata.json` alongside the existing update-report snapshots. Names,
+primary commands, descriptions, and links come from the evaluated packages, not
+a separate hand-maintained list. Tool names link to `meta.homepage` when available,
+retaining their inline-code formatting. String and list values are supported;
+only HTTP(S) URLs are linked. Packages without a primary command or an upstream
+description (such as documentation and generated configuration artifacts) are
+excluded. Home Manager tools are listed first; remaining system tools are listed
+separately, with duplicates removed.
+
+The Darwin dependency-update workflow regenerates the same page from its updated
+snapshot and includes it in the lock-update PR. Run the recipe locally when
+changing tool selections or Home Manager modules too. The page describes the
+checked-in bundle configuration, not an automatically selected GitHub release.
+
 ## 🚀 Project Structure
 
 Inside of your Astro + Starlight project, you'll see the following folders and files:
